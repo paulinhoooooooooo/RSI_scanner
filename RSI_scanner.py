@@ -62,7 +62,8 @@ DEFAUTS = {
     "rsi_delta_min": 4.0,
     "retracement_max_pct": 20.0,
     "zone_rsi": {"actif": True, "surachat": 60.0, "survente": 40.0},
-    "tolerance_rsi_pivot_bougies": 2,
+    "tolerance_rsi_pivot_bougies": 3,
+    "deplacement_max_rsi_bougies": {"D": 8, "W": 4},
     "verifier_ligne": True,
     "tolerance_cassure_prix_pct": 0.5,
     "tolerance_cassure_rsi": 2.0,
@@ -225,20 +226,37 @@ def detecter_pivots(valeurs, gauche, droite, sens, autoriser_provisoire=True):
     return pivots
 
 
-def rsi_au_pivot(rsi_vals, idx, tolerance, sens):
+def rsi_au_pivot(rsi_vals, idx, tolerance, sens, deplacement_max):
     """
     Valeur du RSI correspondant à un pivot de prix.
 
-    Le creux du RSI est rarement exactement aligné sur le creux du prix : on
-    prend l'extremum du RSI dans une fenêtre de +/- `tolerance` bougies.
+    L'extremum du RSI est rarement aligné sur celui du prix, et il peut en être
+    éloigné de plusieurs bougies. Se contenter de la valeur dans une fenêtre
+    étroite fait tomber la droite du RSI sur une pente au lieu du sommet ou du
+    creux — le tracé devient faux.
+
+    On part donc du pivot de prix et on remonte de proche en proche jusqu'à
+    l'extremum local du RSI : à chaque tour on cherche l'extremum dans une
+    fenêtre de +/- `tolerance`, on s'y recentre, et on s'arrête dès qu'on n'a
+    plus bougé. Le déplacement total reste borné par `deplacement_max`, faute de
+    quoi on dériverait vers un extremum sans rapport avec le pivot de départ.
     """
-    a = max(0, idx - tolerance)
-    b = min(len(rsi_vals), idx + tolerance + 1)
-    fenetre = rsi_vals[a:b]
-    if np.all(np.isnan(fenetre)):
+    n = len(rsi_vals)
+    pos = idx
+    for _ in range(deplacement_max + 1):
+        a = max(0, pos - tolerance)
+        b = min(n, pos + tolerance + 1)
+        fenetre = rsi_vals[a:b]
+        if np.all(np.isnan(fenetre)):
+            return None, None
+        j = int(np.nanargmin(fenetre)) if sens == "bas" else int(np.nanargmax(fenetre))
+        candidat = a + j
+        if candidat == pos or abs(candidat - idx) > deplacement_max:
+            break
+        pos = candidat
+    if np.isnan(rsi_vals[pos]):
         return None, None
-    j = int(np.nanargmin(fenetre)) if sens == "bas" else int(np.nanargmax(fenetre))
-    return float(fenetre[j]), a + j
+    return float(rsi_vals[pos]), pos
 
 
 def ligne_cassee(valeurs, i1, v1, i2, v2, sens, tolerance_abs):
@@ -312,6 +330,7 @@ def detecter_divergences(df, vue, params):
     cfg_pivot = params["pivot"][vue]
     cfg_ecart = params["ecart_bougies"][vue]
     tol_rsi_p = params["tolerance_rsi_pivot_bougies"]
+    depl_rsi  = params["deplacement_max_rsi_bougies"][vue]
     delta_min = params["rsi_delta_min"]
     cfg_retr  = params.get("retracement_max_pct", 0)
     cfg_zone  = params.get("zone_rsi", {})
@@ -323,9 +342,9 @@ def detecter_divergences(df, vue, params):
 
     # RSI associé à chaque pivot de prix
     for p in pivots_bas:
-        p["rsi"], p["rsi_idx"] = rsi_au_pivot(rsi_vals, p["idx"], tol_rsi_p, "bas")
+        p["rsi"], p["rsi_idx"] = rsi_au_pivot(rsi_vals, p["idx"], tol_rsi_p, "bas", depl_rsi)
     for p in pivots_haut:
-        p["rsi"], p["rsi_idx"] = rsi_au_pivot(rsi_vals, p["idx"], tol_rsi_p, "haut")
+        p["rsi"], p["rsi_idx"] = rsi_au_pivot(rsi_vals, p["idx"], tol_rsi_p, "haut", depl_rsi)
 
     pivots_bas  = [p for p in pivots_bas  if p["rsi"] is not None]
     pivots_haut = [p for p in pivots_haut if p["rsi"] is not None]

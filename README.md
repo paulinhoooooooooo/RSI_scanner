@@ -159,8 +159,11 @@ signal d'un simple mouvement du marché.
 
 1. **Pivots** — un creux est un point plus bas que les 5 bougies précédentes et
    les 5 suivantes (3 et 3 en vue W). Largeur réglable.
-2. **RSI du pivot** — relevé sur une fenêtre de ±2 bougies autour du pivot de
-   prix : les extremums du prix et du RSI sont rarement alignés au jour près.
+2. **RSI du pivot** — le programme part du pivot de prix et **remonte jusqu'au
+   sommet ou au creux réel du RSI**, jusqu'à 8 bougies plus loin en vue D (4 en
+   vue W). Les extremums du prix et du RSI ne tombent pas le même jour : se
+   contenter de la valeur au jour du pivot pose la droite sur une pente, et le
+   tracé devient faux.
 3. **Appariement** — toutes les paires de pivots dans la plage de portée sont
    testées, la géométrie prix/RSI déterminant le type de divergence.
 4. **Validation** — une paire dont la droite de tendance est traversée par une
@@ -226,6 +229,9 @@ si tu passes `confirmees_seulement` à `false`.
   "W": { "min": 4, "max": 60 }
 },
 "rsi_delta_min": 4.0,                  ← écart RSI minimum (points) — anti-bruit
+"deplacement_max_rsi_bougies": {       ← distance max entre pivot de prix
+  "D": 8, "W": 4                       ←   et extremum du RSI
+},
 "retracement_max_pct": 20.0,           ← écart intermédiaire maximum entre les 2 pivots
 "zone_rsi": {
   "actif": true,
