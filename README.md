@@ -116,8 +116,9 @@ Un ticker par ligne, les lignes commençant par `#` sont ignorées.
 | `--ouvrir` | Ouvre le rapport à la fin du scan |
 
 Le rapport est écrit dans `rapports/divergences_AAAAMMJJ_HHMM.html`. Il contient,
-pour chaque divergence, un mini-graphique prix + RSI avec les deux droites
-tracées.
+pour chaque divergence, un mini-graphique en **bougies japonaises** surmontant
+le RSI, avec les deux droites tracées, un axe de dates et des repères verticaux
+sur les deux pivots pour aligner le prix et le RSI à l'œil.
 
 ---
 

@@ -472,29 +472,32 @@ def analyser_ticker(ticker, params, vues):
 
 # ─── Mini-graphique SVG ───────────────────────────────────────────────────────
 
-def rendre_svg(df, rsi_serie, d, largeur=320, h_prix=84, h_rsi=56):
-    """Vignette prix + RSI sur la fenêtre de la divergence, avec les 2 droites."""
+def rendre_svg(df, rsi_serie, d, largeur=440, h_prix=104, h_rsi=58, h_dates=15):
+    """Vignette en bougies + RSI sur la fenêtre de la divergence, avec les 2 droites."""
     marge = max(4, d["span"] // 6)
     debut = max(0, d["idx_a"] - marge)
     fin   = min(len(df) - 1, d["idx_b"] + marge)
     if fin <= debut:
         return ""
 
-    # On trace la série sur laquelle les pivots ont été détectés (mèches basses
-    # pour une divergence de creux, hautes pour une divergence de sommets) :
-    # sinon la droite reliant deux pivots flotte à côté de la courbe.
-    colonne = "Low" if TYPES_META[d["type"]]["sens"] == "bas" else "High"
-    prix   = df[colonne].astype(float).to_numpy()[debut:fin + 1]
-    lows   = df["Low"].astype(float).to_numpy()[debut:fin + 1]
-    highs  = df["High"].astype(float).to_numpy()[debut:fin + 1]
-    rsis   = rsi_serie.to_numpy(dtype=float)[debut:fin + 1]
+    tranche = slice(debut, fin + 1)
+    opens  = df["Open"].astype(float).to_numpy()[tranche] if "Open" in df.columns else None
+    highs  = df["High"].astype(float).to_numpy()[tranche]
+    lows   = df["Low"].astype(float).to_numpy()[tranche]
+    closes = df["Close"].astype(float).to_numpy()[tranche]
+    rsis   = rsi_serie.to_numpy(dtype=float)[tranche]
+    dates  = df.index[tranche]
+    if opens is None:
+        opens = closes
 
     pad = 6
-    n   = len(prix)
+    n   = len(closes)
+    pas = (largeur - 2 * pad) / max(1, n)
+    corps = max(1.0, pas * 0.62)
 
     def x(idx_global):
-        pos = idx_global - debut
-        return pad + pos * (largeur - 2 * pad) / max(1, n - 1)
+        """Centre horizontal de la bougie."""
+        return pad + (idx_global - debut + 0.5) * pas
 
     def echelle(valeur, vmin, vmax, haut, decalage):
         if vmax - vmin < 1e-9:
@@ -511,26 +514,69 @@ def rendre_svg(df, rsi_serie, d, largeur=320, h_prix=84, h_rsi=56):
     def y_rsi(v):
         return echelle(v, r_min, r_max, h_rsi, h_prix + 8)
 
-    ligne_prix = " ".join(f"{x(debut + k):.1f},{y_prix(prix[k]):.1f}" for k in range(n))
-    ligne_rsi  = " ".join(f"{x(debut + k):.1f},{y_rsi(rsis[k]):.1f}"
-                          for k in range(n) if not np.isnan(rsis[k]))
+    # ── Bougies ──
+    bougies = []
+    for k in range(n):
+        o, h, b, c = opens[k], highs[k], lows[k], closes[k]
+        if np.isnan(h) or np.isnan(b):
+            continue
+        coul = "#3b6d11" if c >= o else "#a32d2d"
+        xc = x(debut + k)
+        y_o, y_c = y_prix(o), y_prix(c)
+        haut_corps = max(0.8, abs(y_o - y_c))
+        bougies.append(
+            f'<line x1="{xc:.1f}" y1="{y_prix(h):.1f}" x2="{xc:.1f}" y2="{y_prix(b):.1f}" '
+            f'stroke="{coul}" stroke-width="0.7"/>'
+            f'<rect x="{xc - corps / 2:.1f}" y="{min(y_o, y_c):.1f}" '
+            f'width="{corps:.1f}" height="{haut_corps:.1f}" fill="{coul}"/>')
+
+    ligne_rsi = " ".join(f"{x(debut + k):.1f},{y_rsi(rsis[k]):.1f}"
+                         for k in range(n) if not np.isnan(rsis[k]))
+
+    # ── Axe de dates : début, pivots, fin, sans étiquettes qui se chevauchent ──
+    jours_couverts = (dates[-1] - dates[0]).days
+    fmt = "%m/%y" if jours_couverts > 240 else "%d/%m"
+    y_texte = h_prix + 8 + h_rsi + 11
+    reperes, occupes = [], []
+    candidats = [(debut, "start"), (d["idx_a"], "middle"),
+                 (d["idx_b"], "middle"), (fin, "end")]
+    for idx, ancrage in candidats:
+        xc = x(idx)
+        largeur_txt = 30
+        gauche = xc - (0 if ancrage == "start" else
+                       largeur_txt / 2 if ancrage == "middle" else largeur_txt)
+        if any(abs(gauche - g) < largeur_txt + 4 for g in occupes):
+            continue
+        occupes.append(gauche)
+        pos = max(pad, min(largeur - pad, xc))
+        reperes.append(
+            f'<text x="{pos:.1f}" y="{y_texte}" font-size="9" fill="#999" '
+            f'text-anchor="{ancrage}">{dates[idx - debut].strftime(fmt)}</text>')
+
+    # repères verticaux sur les deux pivots, pour relier prix et RSI à l'œil
+    verticales = "".join(
+        f'<line x1="{x(i):.1f}" y1="0" x2="{x(i):.1f}" y2="{h_prix + 8 + h_rsi}" '
+        f'stroke="#c9c4bb" stroke-width="0.6" stroke-dasharray="2,3"/>'
+        for i in (d["idx_a"], d["idx_b"]))
 
     couleur = "#0f6e56" if TYPES_META[d["type"]]["biais"] == "haussier" else "#a32d2d"
-    hauteur = h_prix + 8 + h_rsi
+    hauteur = h_prix + 8 + h_rsi + h_dates
 
     return f"""<svg class="mini" viewBox="0 0 {largeur} {hauteur}" width="{largeur}" height="{hauteur}">
 <rect x="0" y="0" width="{largeur}" height="{h_prix}" fill="#fbfaf7"/>
 <rect x="0" y="{h_prix + 8}" width="{largeur}" height="{h_rsi}" fill="#fbfaf7"/>
 <line x1="0" y1="{y_rsi(70):.1f}" x2="{largeur}" y2="{y_rsi(70):.1f}" stroke="#ddd" stroke-dasharray="2,2"/>
 <line x1="0" y1="{y_rsi(30):.1f}" x2="{largeur}" y2="{y_rsi(30):.1f}" stroke="#ddd" stroke-dasharray="2,2"/>
-<polyline points="{ligne_prix}" fill="none" stroke="#555" stroke-width="1.1"/>
+{verticales}
+{"".join(bougies)}
 <polyline points="{ligne_rsi}" fill="none" stroke="#378add" stroke-width="1.1"/>
-<line x1="{x(d['idx_a']):.1f}" y1="{y_prix(d['prix_a']):.1f}" x2="{x(d['idx_b']):.1f}" y2="{y_prix(d['prix_b']):.1f}" stroke="{couleur}" stroke-width="1.4"/>
-<line x1="{x(d['rsi_idx_a']):.1f}" y1="{y_rsi(d['rsi_a']):.1f}" x2="{x(d['rsi_idx_b']):.1f}" y2="{y_rsi(d['rsi_b']):.1f}" stroke="{couleur}" stroke-width="1.4"/>
-<circle cx="{x(d['idx_a']):.1f}" cy="{y_prix(d['prix_a']):.1f}" r="2.4" fill="{couleur}"/>
-<circle cx="{x(d['idx_b']):.1f}" cy="{y_prix(d['prix_b']):.1f}" r="2.4" fill="{couleur}"/>
-<circle cx="{x(d['rsi_idx_a']):.1f}" cy="{y_rsi(d['rsi_a']):.1f}" r="2.4" fill="{couleur}"/>
-<circle cx="{x(d['rsi_idx_b']):.1f}" cy="{y_rsi(d['rsi_b']):.1f}" r="2.4" fill="{couleur}"/>
+<line x1="{x(d['idx_a']):.1f}" y1="{y_prix(d['prix_a']):.1f}" x2="{x(d['idx_b']):.1f}" y2="{y_prix(d['prix_b']):.1f}" stroke="{couleur}" stroke-width="1.5"/>
+<line x1="{x(d['rsi_idx_a']):.1f}" y1="{y_rsi(d['rsi_a']):.1f}" x2="{x(d['rsi_idx_b']):.1f}" y2="{y_rsi(d['rsi_b']):.1f}" stroke="{couleur}" stroke-width="1.5"/>
+<circle cx="{x(d['idx_a']):.1f}" cy="{y_prix(d['prix_a']):.1f}" r="2.6" fill="{couleur}"/>
+<circle cx="{x(d['idx_b']):.1f}" cy="{y_prix(d['prix_b']):.1f}" r="2.6" fill="{couleur}"/>
+<circle cx="{x(d['rsi_idx_a']):.1f}" cy="{y_rsi(d['rsi_a']):.1f}" r="2.6" fill="{couleur}"/>
+<circle cx="{x(d['rsi_idx_b']):.1f}" cy="{y_rsi(d['rsi_b']):.1f}" r="2.6" fill="{couleur}"/>
+{"".join(reperes)}
 </svg>"""
 
 
