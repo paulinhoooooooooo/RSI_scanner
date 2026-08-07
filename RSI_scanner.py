@@ -60,7 +60,6 @@ DEFAUTS = {
         "W": {"courte": 4, "moyenne": 12},
     },
     "rsi_delta_min": 4.0,
-    "tolerance_egalite_prix_pct": 0.5,
     "tolerance_rsi_pivot_bougies": 2,
     "verifier_ligne": True,
     "tolerance_cassure_prix_pct": 0.5,
@@ -284,7 +283,6 @@ def detecter_divergences(df, vue, params):
     cfg_pivot = params["pivot"][vue]
     cfg_ecart = params["ecart_bougies"][vue]
     tol_rsi_p = params["tolerance_rsi_pivot_bougies"]
-    tol_egal  = params["tolerance_egalite_prix_pct"] / 100.0
     delta_min = params["rsi_delta_min"]
 
     pivots_bas  = detecter_pivots(lows,  cfg_pivot["gauche"], cfg_pivot["droite"],
@@ -326,22 +324,25 @@ def detecter_divergences(df, vue, params):
                 ecart_p = (b["prix"] - a["prix"]) / a["prix"] if a["prix"] else 0.0
 
                 # Géométrie attendue selon le type de divergence.
-                # Les creux/sommets "quasi égaux" sont acceptés via une tolérance :
-                # une divergence sur double creux plat reste une divergence.
+                #
+                # Le prix ne doit JAMAIS partir dans le même sens que le RSI :
+                # deux droites parallèles ne sont pas une divergence, juste une
+                # tendance. Un prix strictement plat (écart nul) est accepté —
+                # un double creux surmonté d'un RSI qui remonte diverge bien.
                 if sens == "bas":
                     if cachee:
-                        prix_ok = ecart_p > tol_egal
-                        rsi_ok  = d_rsi <= -delta_min
+                        prix_ok = ecart_p >= 0          # creux plus haut
+                        rsi_ok  = d_rsi <= -delta_min   # RSI plus bas
                     else:
-                        prix_ok = ecart_p < tol_egal
-                        rsi_ok  = d_rsi >= delta_min
+                        prix_ok = ecart_p <= 0          # creux plus bas ou égal
+                        rsi_ok  = d_rsi >= delta_min    # RSI plus haut
                 else:
                     if cachee:
-                        prix_ok = ecart_p < -tol_egal
-                        rsi_ok  = d_rsi >= delta_min
+                        prix_ok = ecart_p <= 0          # sommet plus bas
+                        rsi_ok  = d_rsi >= delta_min    # RSI plus haut
                     else:
-                        prix_ok = ecart_p > -tol_egal
-                        rsi_ok  = d_rsi <= -delta_min
+                        prix_ok = ecart_p >= 0          # sommet plus haut ou égal
+                        rsi_ok  = d_rsi <= -delta_min   # RSI plus bas
 
                 if not (prix_ok and rsi_ok):
                     continue
@@ -429,13 +430,17 @@ def rendre_svg(df, rsi_serie, d, largeur=320, h_prix=84, h_rsi=56):
     if fin <= debut:
         return ""
 
-    closes = df["Close"].astype(float).to_numpy()[debut:fin + 1]
+    # On trace la série sur laquelle les pivots ont été détectés (mèches basses
+    # pour une divergence de creux, hautes pour une divergence de sommets) :
+    # sinon la droite reliant deux pivots flotte à côté de la courbe.
+    colonne = "Low" if TYPES_META[d["type"]]["sens"] == "bas" else "High"
+    prix   = df[colonne].astype(float).to_numpy()[debut:fin + 1]
     lows   = df["Low"].astype(float).to_numpy()[debut:fin + 1]
     highs  = df["High"].astype(float).to_numpy()[debut:fin + 1]
     rsis   = rsi_serie.to_numpy(dtype=float)[debut:fin + 1]
 
     pad = 6
-    n   = len(closes)
+    n   = len(prix)
 
     def x(idx_global):
         pos = idx_global - debut
@@ -456,7 +461,7 @@ def rendre_svg(df, rsi_serie, d, largeur=320, h_prix=84, h_rsi=56):
     def y_rsi(v):
         return echelle(v, r_min, r_max, h_rsi, h_prix + 8)
 
-    ligne_prix = " ".join(f"{x(debut + k):.1f},{y_prix(closes[k]):.1f}" for k in range(n))
+    ligne_prix = " ".join(f"{x(debut + k):.1f},{y_prix(prix[k]):.1f}" for k in range(n))
     ligne_rsi  = " ".join(f"{x(debut + k):.1f},{y_rsi(rsis[k]):.1f}"
                           for k in range(n) if not np.isnan(rsis[k]))
 

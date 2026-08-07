@@ -144,8 +144,12 @@ divergence sur deux semaines. Chacune est étiquetée `courte`, `moyenne` ou
 `longue` selon sa portée.
 
 Les creux **quasi plats** comptent : un double creux au même niveau surmonté
-d'un RSI qui remonte est une divergence. `tolerance_egalite_prix_pct` (0,5 % par
-défaut) définit ce que « au même niveau » veut dire.
+d'un RSI qui remonte est une divergence.
+
+En revanche, **le prix et le RSI doivent aller dans des sens opposés**. Si les
+deux droites descendent, ou si les deux montent, il n'y a pas de divergence —
+juste une tendance, et rien n'est affiché. C'est la règle qui distingue un vrai
+signal d'un simple mouvement du marché.
 
 ---
 
@@ -191,7 +195,6 @@ si tu passes `confirmees_seulement` à `false`.
   "W": { "min": 4, "max": 60 }
 },
 "rsi_delta_min": 4.0,                  ← écart RSI minimum (points) — anti-bruit
-"tolerance_egalite_prix_pct": 0.5,     ← ce qui compte comme "creux égal"
 "verifier_ligne": true,                ← rejette les droites cassées
 "max_par_type": 3,                     ← nb max de divergences par type et par vue
 "telegram": {
