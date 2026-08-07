@@ -211,6 +211,21 @@ dans le KPI « Anciennes écartées ».
 
 Pour tout voir malgré tout : `--historique`.
 
+## « À surveiller maintenant » — la section du haut
+
+Le rapport s'ouvre sur une section encadrée qui ne retient que ce qui se joue
+en ce moment :
+
+- toutes les divergences **en formation**, quelle que soit leur date ;
+- les divergences **confirmées** de moins de **5 jours** en vue D, **1 semaine**
+  en vue W.
+
+Une divergence confirmée depuis trois semaines a déjà donné ce qu'elle avait à
+donner : elle reste consultable dans les tableaux par vue, en dessous, mais elle
+n'encombre plus la tête du rapport.
+
+Seuils réglables : `prioritaire.fraicheur_confirmees`.
+
 ## Confirmée vs en formation
 
 Un pivot n'est certain qu'une fois ses bougies de droite passées. Une divergence
@@ -247,6 +262,9 @@ si tu passes `confirmees_seulement` à `false`.
 "rapport": {
   "fraicheur_max_bougies": { "D": 40, "W": 13 }   ← au-delà, non affiché
 },
+"prioritaire": {
+  "fraicheur_confirmees": { "D": 5, "W": 1 }      ← âge max d'une confirmée
+},                                                ←   dans la section du haut
 "verifier_ligne": true,                ← rejette les droites cassées
 "max_par_type": 3,                     ← nb max de divergences par type et par vue
 "telegram": {

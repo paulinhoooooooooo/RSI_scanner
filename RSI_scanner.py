@@ -78,6 +78,9 @@ DEFAUTS = {
     "rapport": {
         "fraicheur_max_bougies": {"D": 40, "W": 13},
     },
+    "prioritaire": {
+        "fraicheur_confirmees": {"D": 5, "W": 1},
+    },
     "telegram": {
         "actif": True,
         "fraicheur_max_bougies": {"D": 10, "W": 4},
@@ -629,6 +632,9 @@ tbody tr.baiss{border-left:3px solid #a32d2d}
 .vue-W{background:#f3e9f7;color:#5c2c70;font-weight:600}.bi{background:#e6f1fb;color:#185fa5}.bo{background:#fdf1e3;color:#ba7517}
 .mini{border-radius:6px;border:0.5px solid #eee}
 .sub{font-size:10px;color:#999;margin-top:2px}
+.prio{border:1.5px solid #ba7517;border-radius:10px;padding:3px;background:#fdf6ec}
+.prio .table-wrap{margin-bottom:0;border:none}
+.kpi.prio-kpi{border-top:3px solid #ba7517}
 .vide{background:#fff;border:0.5px solid #e0ddd6;border-radius:10px;padding:2rem;text-align:center;color:#888;font-size:13px}
 .legende{background:#fff;border:0.5px solid #e0ddd6;border-radius:10px;padding:14px 18px;font-size:12px;color:#555;margin-bottom:1.5rem}
 .legende div{margin-bottom:5px}.legende div:last-child{margin-bottom:0}
@@ -642,6 +648,42 @@ def badge_duree(d):
             f'{d["span"]} {unite}</span>')
 
 
+def tableau_html(liste):
+    """Tableau complet pour une liste de divergences."""
+    lignes = ['<div class="table-wrap"><table><thead><tr>'
+              '<th>Ticker</th><th>Vue</th><th>Type</th><th>Portée</th>'
+              '<th>Pivot 1</th><th>Pivot 2</th><th>Prix</th>'
+              '<th>RSI</th><th>Δ RSI</th><th>Écart interm.</th>'
+              '<th>Statut</th><th>Graphique</th>'
+              '</tr></thead><tbody>']
+    for d in liste:
+        meta = TYPES_META[d["type"]]
+        cls  = "hauss" if meta["biais"] == "haussier" else "baiss"
+        b_delta = "bg" if d["delta_rsi"] > 0 else "br"
+        statut = ('<span class="badge bg">confirmée</span>' if d["confirmee"]
+                  else '<span class="badge bo">en formation</span>')
+        fraicheur = (f'<div class="sub">il y a {d["fraicheur"]} '
+                     f'{VUES_META[d["vue"]]["unite"]}</div>')
+        retr = d.get("retracement_pct", 0.0)
+        retr_cls = "bn" if retr <= 15 else ("bi" if retr <= 30 else "bo")
+        lignes.append(f"""<tr class="{cls}">
+<td class="tk">{d['ticker']}</td>
+<td><span class="badge vue-{d['vue']}">{d['vue']}</span></td>
+<td>{meta['emoji']} {meta['court']}</td>
+<td>{badge_duree(d)}</td>
+<td>{d['date_a'].strftime('%d/%m/%Y')}</td>
+<td>{d['date_b'].strftime('%d/%m/%Y')}{fraicheur}</td>
+<td>{d['prix_a']:.2f} → {d['prix_b']:.2f}<div class="sub">{d['ecart_prix_pct']:+.2f}%</div></td>
+<td>{d['rsi_a']:.1f} → {d['rsi_b']:.1f}</td>
+<td><span class="badge {b_delta}">{d['delta_rsi']:+.1f}</span></td>
+<td><span class="badge {retr_cls}">{retr:.1f}%</span></td>
+<td>{statut}</td>
+<td>{d['svg']}</td>
+</tr>""")
+    lignes.append('</tbody></table></div>')
+    return "".join(lignes)
+
+
 def generer_html(divergences, tickers, vues, erreurs, params, chemin, anciennes=0):
     maintenant = datetime.now()
     zone = params.get("zone_rsi", {})
@@ -652,6 +694,9 @@ def generer_html(divergences, tickers, vues, erreurs, params, chemin, anciennes=
     baiss = [d for d in divergences if TYPES_META[d["type"]]["biais"] == "baissier"]
     recentes = [d for d in divergences
                 if d["fraicheur"] <= params["telegram"]["fraicheur_max_bougies"][d["vue"]]]
+    seuil_kpi = params["prioritaire"]["fraicheur_confirmees"]
+    a_surveiller_kpi = [d for d in divergences
+                        if (not d["confirmee"]) or d["fraicheur"] <= seuil_kpi[d["vue"]]]
 
     html = [f"""<!DOCTYPE html>
 <html lang="fr">
@@ -673,6 +718,7 @@ Filtres anti-bruit : écart intermédiaire &le; {params['retracement_max_pct']}%
 <div class="kpi"><div class="kl">Divergences</div><div class="kv">{len(divergences)}</div></div>
 <div class="kpi hauss"><div class="kl">Haussières</div><div class="kv green">{len(hauss)}</div></div>
 <div class="kpi baiss"><div class="kl">Baissières</div><div class="kv red">{len(baiss)}</div></div>
+<div class="kpi prio-kpi"><div class="kl">À surveiller</div><div class="kv">{len(a_surveiller_kpi)}</div></div>
 <div class="kpi"><div class="kl">Récentes (alertées)</div><div class="kv">{len(recentes)}</div></div>
 <div class="kpi"><div class="kl">Anciennes écartées</div><div class="kv">{anciennes}</div></div>
 <div class="kpi"><div class="kl">Tickers en échec</div><div class="kv">{len(erreurs)}</div></div>
@@ -685,6 +731,21 @@ Filtres anti-bruit : écart intermédiaire &le; {params['retracement_max_pct']}%
         html.append(f'<div>{m["emoji"]} <b>{m["label"]}</b> — {m["explication"]}</div>')
     html.append('</div>')
 
+    # ── Section prioritaire : ce qui se joue maintenant ──
+    seuil_conf = params["prioritaire"]["fraicheur_confirmees"]
+    a_surveiller = [d for d in divergences
+                    if (not d["confirmee"]) or d["fraicheur"] <= seuil_conf[d["vue"]]]
+    html.append(f'<div class="section-title">À surveiller maintenant '
+                f'— {len(a_surveiller)} divergence(s)</div>')
+    if a_surveiller:
+        html.append('<div class="prio">')
+        html.append(tableau_html(sorted(a_surveiller,
+                                        key=lambda x: (x["fraicheur"], x["ticker"]))))
+        html.append('</div>')
+    else:
+        html.append('<div class="vide">Rien en formation, et aucune divergence '
+                    'confirmée assez récente.</div>')
+
     for vue in vues:
         du_vue = [d for d in divergences if d["vue"] == vue]
         html.append(f'<div class="section-title">{VUES_META[vue]["label"]} '
@@ -693,38 +754,7 @@ Filtres anti-bruit : écart intermédiaire &le; {params['retracement_max_pct']}%
             html.append('<div class="vide">Aucune divergence détectée sur cette vue.</div>')
             continue
 
-        html.append('<div class="table-wrap"><table><thead><tr>'
-                    '<th>Ticker</th><th>Vue</th><th>Type</th><th>Portée</th>'
-                    '<th>Pivot 1</th><th>Pivot 2</th><th>Prix</th>'
-                    '<th>RSI</th><th>Δ RSI</th><th>Écart interm.</th>'
-                    '<th>Statut</th><th>Graphique</th>'
-                    '</tr></thead><tbody>')
-
-        for d in sorted(du_vue, key=lambda x: (x["fraicheur"], x["ticker"])):
-            meta = TYPES_META[d["type"]]
-            cls  = "hauss" if meta["biais"] == "haussier" else "baiss"
-            b_delta = ("bg" if d["delta_rsi"] > 0 else "br")
-            statut = ('<span class="badge bg">confirmée</span>' if d["confirmee"]
-                      else '<span class="badge bo">en formation</span>')
-            fraicheur = (f'<div class="sub">il y a {d["fraicheur"]} '
-                         f'{VUES_META[vue]["unite"]}</div>')
-            retr = d.get("retracement_pct", 0.0)
-            retr_cls = "bn" if retr <= 15 else ("bi" if retr <= 30 else "bo")
-            html.append(f"""<tr class="{cls}">
-<td class="tk">{d['ticker']}</td>
-<td><span class="badge vue-{d['vue']}">{d['vue']}</span></td>
-<td>{meta['emoji']} {meta['court']}</td>
-<td>{badge_duree(d)}</td>
-<td>{d['date_a'].strftime('%d/%m/%Y')}</td>
-<td>{d['date_b'].strftime('%d/%m/%Y')}{fraicheur}</td>
-<td>{d['prix_a']:.2f} → {d['prix_b']:.2f}<div class="sub">{d['ecart_prix_pct']:+.2f}%</div></td>
-<td>{d['rsi_a']:.1f} → {d['rsi_b']:.1f}</td>
-<td><span class="badge {b_delta}">{d['delta_rsi']:+.1f}</span></td>
-<td><span class="badge {retr_cls}">{retr:.1f}%</span></td>
-<td>{statut}</td>
-<td>{d['svg']}</td>
-</tr>""")
-        html.append('</tbody></table></div>')
+        html.append(tableau_html(sorted(du_vue, key=lambda x: (x["fraicheur"], x["ticker"]))))
 
     if erreurs:
         html.append('<div class="section-title">Tickers non analysés</div>')
