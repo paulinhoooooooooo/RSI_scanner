@@ -111,6 +111,7 @@ Un ticker par ligne, les lignes commençant par `#` sont ignorées.
 | `--no-telegram` | Génère le rapport sans envoyer d'alerte |
 | `--toutes` | Alerte aussi sur les divergences anciennes ou non confirmées |
 | `--reset-etat` | Oublie ce qui a déjà été alerté et renvoie tout |
+| `--historique` | Garde aussi les divergences anciennes dans le rapport |
 | `--sortie chemin.html` | Choisit le fichier du rapport |
 | `--ouvrir` | Ouvre le rapport à la fin du scan |
 
@@ -171,6 +172,35 @@ garantit leur cohérence et divise par deux les requêtes.
 
 ---
 
+## Filtres anti-bruit
+
+Trois règles écartent les paires géométriquement valides mais sans portée
+pratique.
+
+**Sens opposés obligatoire.** Le prix et le RSI ne doivent jamais aller dans la
+même direction — deux droites parallèles sont une tendance, pas une divergence.
+
+**Écart intermédiaire limité** (`retracement_max_pct`, 20 % par défaut). Deux
+sommets séparés par une chute de 30 % appartiennent à deux phases de marché
+différentes : les relier donne une droite valide et un signal sans valeur. Le
+rapport affiche cet écart pour chaque ligne, ce qui permet de juger sur pièce.
+
+**RSI en zone** (`zone_rsi`). Une divergence baissière suppose que le RSI a
+atteint le surachat (≥ 60 par défaut), une haussière qu'il a touché la survente
+(≤ 40). Une divergence entièrement contenue entre 45 et 55 ne dit rien.
+
+Pour les désactiver : `retracement_max_pct` à `0`, et `zone_rsi.actif` à
+`false`.
+
+## Seules les divergences récentes
+
+Une divergence vieille de deux ans a déjà joué ou échoué. Le rapport ne garde
+que celles dont le second pivot est récent : **40 jours** en vue D, **13
+semaines** en vue W (`rapport.fraicheur_max_bougies`). Les autres sont comptées
+dans le KPI « Anciennes écartées ».
+
+Pour tout voir malgré tout : `--historique`.
+
 ## Confirmée vs en formation
 
 Un pivot n'est certain qu'une fois ses bougies de droite passées. Une divergence
@@ -195,6 +225,15 @@ si tu passes `confirmees_seulement` à `false`.
   "W": { "min": 4, "max": 60 }
 },
 "rsi_delta_min": 4.0,                  ← écart RSI minimum (points) — anti-bruit
+"retracement_max_pct": 20.0,           ← écart intermédiaire maximum entre les 2 pivots
+"zone_rsi": {
+  "actif": true,
+  "surachat": 60.0,                    ← RSI mini pour une divergence baissière
+  "survente": 40.0                     ← RSI maxi pour une divergence haussière
+},
+"rapport": {
+  "fraicheur_max_bougies": { "D": 40, "W": 13 }   ← au-delà, non affiché
+},
 "verifier_ligne": true,                ← rejette les droites cassées
 "max_par_type": 3,                     ← nb max de divergences par type et par vue
 "telegram": {
@@ -203,9 +242,10 @@ si tu passes `confirmees_seulement` à `false`.
 }
 ```
 
-**Trop d'alertes ?** Augmente `pivot.D.gauche`/`droite` (7 ou 8) ou
-`rsi_delta_min` (6 à 8). Des pivots plus larges donnent moins de signaux, mais
-plus fiables.
+**Trop d'alertes ?** Dans l'ordre d'efficacité : baisse `retracement_max_pct`
+(10 ou 12), monte `zone_rsi.surachat` à 70 et baisse `survente` à 30, augmente
+`pivot.D.gauche`/`droite` (7 ou 8), puis `rsi_delta_min` (6 à 8). Des pivots
+plus larges donnent moins de signaux, mais plus fiables.
 
 **Pas assez ?** Fais l'inverse, et éventuellement active les divergences
 cachées.

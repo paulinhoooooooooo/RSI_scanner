@@ -60,6 +60,8 @@ DEFAUTS = {
         "W": {"courte": 4, "moyenne": 12},
     },
     "rsi_delta_min": 4.0,
+    "retracement_max_pct": 20.0,
+    "zone_rsi": {"actif": True, "surachat": 60.0, "survente": 40.0},
     "tolerance_rsi_pivot_bougies": 2,
     "verifier_ligne": True,
     "tolerance_cassure_prix_pct": 0.5,
@@ -71,6 +73,9 @@ DEFAUTS = {
         "baissiere_reguliere": True,
         "haussiere_cachee": False,
         "baissiere_cachee": False,
+    },
+    "rapport": {
+        "fraicheur_max_bougies": {"D": 40, "W": 13},
     },
     "telegram": {
         "actif": True,
@@ -259,6 +264,30 @@ def ligne_cassee(valeurs, i1, v1, i2, v2, sens, tolerance_abs):
     return False
 
 
+def excursion_intermediaire(lows, highs, i1, i2, v1, v2, sens):
+    """
+    Profondeur, en %, du plus grand écart du prix entre les deux pivots.
+
+    Pour une divergence de sommets on mesure jusqu'où le prix est descendu sous
+    le plus bas des deux sommets ; pour une divergence de creux, jusqu'où il est
+    monté au-dessus du plus haut des deux creux. Une valeur élevée signale deux
+    mouvements distincts plutôt qu'une même structure qui s'essouffle.
+    """
+    if i2 <= i1 + 1:
+        return 0.0
+    if sens == "haut":
+        reference = min(v1, v2)
+        extreme   = float(np.nanmin(lows[i1 + 1:i2]))
+        if reference <= 0:
+            return 0.0
+        return max(0.0, (reference - extreme) / reference * 100)
+    reference = max(v1, v2)
+    extreme   = float(np.nanmax(highs[i1 + 1:i2]))
+    if reference <= 0:
+        return 0.0
+    return max(0.0, (extreme - reference) / reference * 100)
+
+
 # ─── Détection des divergences ────────────────────────────────────────────────
 
 def classer_duree(span, seuils):
@@ -284,6 +313,8 @@ def detecter_divergences(df, vue, params):
     cfg_ecart = params["ecart_bougies"][vue]
     tol_rsi_p = params["tolerance_rsi_pivot_bougies"]
     delta_min = params["rsi_delta_min"]
+    cfg_retr  = params.get("retracement_max_pct", 0)
+    cfg_zone  = params.get("zone_rsi", {})
 
     pivots_bas  = detecter_pivots(lows,  cfg_pivot["gauche"], cfg_pivot["droite"],
                                   "bas",  params["autoriser_pivot_provisoire"])
@@ -357,7 +388,26 @@ def detecter_divergences(df, vue, params):
                                     sens, lambda _ligne: tol_r):
                         continue
 
+                # Filtre de retracement : deux sommets séparés par une chute
+                # profonde appartiennent à des phases de marché différentes.
+                # Les relier donne une droite valide mais sans portée pratique.
+                profondeur = excursion_intermediaire(lows, highs, a["idx"], b["idx"],
+                                                     a["prix"], b["prix"], sens)
+                if cfg_retr and profondeur > cfg_retr:
+                    continue
+
+                # Filtre de zone : une divergence baissière n'a de sens que si le
+                # RSI a atteint le surachat, et inversement en survente.
+                if cfg_zone.get("actif", True):
+                    if sens == "bas":
+                        if min(a["rsi"], b["rsi"]) > cfg_zone["survente"]:
+                            continue
+                    else:
+                        if max(a["rsi"], b["rsi"]) < cfg_zone["surachat"]:
+                            continue
+
                 candidats.append({
+                    "retracement_pct": round(profondeur, 1),
                     "type": type_cle,
                     "vue": vue,
                     "idx_a": a["idx"], "idx_b": b["idx"],
@@ -509,7 +559,9 @@ tbody tr.baiss{border-left:3px solid #a32d2d}
 .tk{font-weight:500;font-size:13px}
 .badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:500;white-space:nowrap}
 .bg{background:#eaf3de;color:#3b6d11}.br{background:#fcebeb;color:#a32d2d}
-.bn{background:#f0ede8;color:#666}.bi{background:#e6f1fb;color:#185fa5}.bo{background:#fdf1e3;color:#ba7517}
+.bn{background:#f0ede8;color:#666}
+.vue-D{background:#e8eef7;color:#2c4a70;font-weight:600}
+.vue-W{background:#f3e9f7;color:#5c2c70;font-weight:600}.bi{background:#e6f1fb;color:#185fa5}.bo{background:#fdf1e3;color:#ba7517}
 .mini{border-radius:6px;border:0.5px solid #eee}
 .sub{font-size:10px;color:#999;margin-top:2px}
 .vide{background:#fff;border:0.5px solid #e0ddd6;border-radius:10px;padding:2rem;text-align:center;color:#888;font-size:13px}
@@ -525,8 +577,12 @@ def badge_duree(d):
             f'{d["span"]} {unite}</span>')
 
 
-def generer_html(divergences, tickers, vues, erreurs, params, chemin):
+def generer_html(divergences, tickers, vues, erreurs, params, chemin, anciennes=0):
     maintenant = datetime.now()
+    zone = params.get("zone_rsi", {})
+    zone_txt = ("" if not zone.get("actif", True) else
+                f" · RSI en zone (&ge; {zone['surachat']:.0f} pour une baissière,"
+                f" &le; {zone['survente']:.0f} pour une haussière)")
     hauss = [d for d in divergences if TYPES_META[d["type"]]["biais"] == "haussier"]
     baiss = [d for d in divergences if TYPES_META[d["type"]]["biais"] == "baissier"]
     recentes = [d for d in divergences
@@ -545,13 +601,15 @@ def generer_html(divergences, tickers, vues, erreurs, params, chemin):
 <h1>Divergences RSI
 <span style="font-size:14px;padding:3px 10px;border-radius:4px;background:#f0ede8;color:#555;margin-left:8px">{' + '.join(vues)}</span></h1>
 <p class="meta">{len(tickers)} tickers analysés &nbsp;|&nbsp; RSI({params['rsi_periode']}) Wilder &nbsp;|&nbsp; historique {params['periode_historique']} &nbsp;|&nbsp; généré le {maintenant.strftime('%d/%m/%Y %H:%M')}</p>
-<p class="note">Pivots : {params['pivot']['D']['gauche']}/{params['pivot']['D']['droite']} bougies en vue D, {params['pivot']['W']['gauche']}/{params['pivot']['W']['droite']} en vue W · Portée appariée de {params['ecart_bougies']['D']['min']} à {params['ecart_bougies']['D']['max']} bougies (D) — les divergences longues comme courtes sont détectées · Un pivot « en formation » n'a pas encore sa fenêtre droite complète et peut être invalidé par les prochaines bougies.</p>
+<p class="note">Pivots : {params['pivot']['D']['gauche']}/{params['pivot']['D']['droite']} bougies en vue D, {params['pivot']['W']['gauche']}/{params['pivot']['W']['droite']} en vue W · Portée appariée de {params['ecart_bougies']['D']['min']} à {params['ecart_bougies']['D']['max']} bougies (D) — les divergences longues comme courtes sont détectées · Un pivot « en formation » n'a pas encore sa fenêtre droite complète et peut être invalidé par les prochaines bougies.<br>
+Filtres anti-bruit : écart intermédiaire &le; {params['retracement_max_pct']}% (deux pivots séparés par un mouvement plus ample appartiennent à des phases différentes){zone_txt}.</p>
 
 <div class="kpis">
 <div class="kpi"><div class="kl">Divergences</div><div class="kv">{len(divergences)}</div></div>
 <div class="kpi hauss"><div class="kl">Haussières</div><div class="kv green">{len(hauss)}</div></div>
 <div class="kpi baiss"><div class="kl">Baissières</div><div class="kv red">{len(baiss)}</div></div>
 <div class="kpi"><div class="kl">Récentes (alertées)</div><div class="kv">{len(recentes)}</div></div>
+<div class="kpi"><div class="kl">Anciennes écartées</div><div class="kv">{anciennes}</div></div>
 <div class="kpi"><div class="kl">Tickers en échec</div><div class="kv">{len(erreurs)}</div></div>
 </div>"""]
 
@@ -571,9 +629,10 @@ def generer_html(divergences, tickers, vues, erreurs, params, chemin):
             continue
 
         html.append('<div class="table-wrap"><table><thead><tr>'
-                    '<th>Ticker</th><th>Type</th><th>Portée</th>'
+                    '<th>Ticker</th><th>Vue</th><th>Type</th><th>Portée</th>'
                     '<th>Pivot 1</th><th>Pivot 2</th><th>Prix</th>'
-                    '<th>RSI</th><th>Δ RSI</th><th>Statut</th><th>Graphique</th>'
+                    '<th>RSI</th><th>Δ RSI</th><th>Écart interm.</th>'
+                    '<th>Statut</th><th>Graphique</th>'
                     '</tr></thead><tbody>')
 
         for d in sorted(du_vue, key=lambda x: (x["fraicheur"], x["ticker"])):
@@ -584,8 +643,11 @@ def generer_html(divergences, tickers, vues, erreurs, params, chemin):
                       else '<span class="badge bo">en formation</span>')
             fraicheur = (f'<div class="sub">il y a {d["fraicheur"]} '
                          f'{VUES_META[vue]["unite"]}</div>')
+            retr = d.get("retracement_pct", 0.0)
+            retr_cls = "bn" if retr <= 10 else ("bi" if retr <= 20 else "bo")
             html.append(f"""<tr class="{cls}">
 <td class="tk">{d['ticker']}</td>
+<td><span class="badge vue-{d['vue']}">{d['vue']}</span></td>
 <td>{meta['emoji']} {meta['court']}</td>
 <td>{badge_duree(d)}</td>
 <td>{d['date_a'].strftime('%d/%m/%Y')}</td>
@@ -593,6 +655,7 @@ def generer_html(divergences, tickers, vues, erreurs, params, chemin):
 <td>{d['prix_a']:.2f} → {d['prix_b']:.2f}<div class="sub">{d['ecart_prix_pct']:+.2f}%</div></td>
 <td>{d['rsi_a']:.1f} → {d['rsi_b']:.1f}</td>
 <td><span class="badge {b_delta}">{d['delta_rsi']:+.1f}</span></td>
+<td><span class="badge {retr_cls}">{retr:.1f}%</span></td>
 <td>{statut}</td>
 <td>{d['svg']}</td>
 </tr>""")
@@ -702,6 +765,8 @@ def main():
                         help="Oublie les divergences déjà alertées et tout renvoyer")
     parser.add_argument("--toutes", action="store_true",
                         help="Alerte sur toutes les divergences, même anciennes")
+    parser.add_argument("--historique", action="store_true",
+                        help="Garde aussi les divergences anciennes dans le rapport")
     parser.add_argument("--sortie", default=None,
                         help="Chemin du rapport HTML")
     parser.add_argument("--ouvrir", action="store_true",
@@ -746,10 +811,25 @@ def main():
         divergences.extend(trouvees)
         time.sleep(0.3)
 
+    # ── On écarte l'historique ancien : une divergence vieille de deux ans
+    #    n'a plus d'intérêt opérationnel, elle a déjà joué ou échoué. ──
+    anciennes = 0
+    if not args.historique:
+        seuils = {v: max(params["rapport"]["fraicheur_max_bougies"][v],
+                         params["telegram"]["fraicheur_max_bougies"][v])
+                  for v in ("D", "W")}
+        avant_filtre = len(divergences)
+        divergences = [d for d in divergences if d["fraicheur"] <= seuils[d["vue"]]]
+        anciennes = avant_filtre - len(divergences)
+        if anciennes:
+            print(f"\n({anciennes} divergence(s) trop ancienne(s) écartée(s) — "
+                  f"au-delà de {seuils['D']} jours / {seuils['W']} semaines, "
+                  f"--historique pour les voir)")
+
     # ── Rapport ──
     horodatage = datetime.now().strftime("%Y%m%d_%H%M")
     chemin = Path(args.sortie) if args.sortie else RAPPORTS_DIR / f"divergences_{horodatage}.html"
-    generer_html(divergences, tickers, vues, erreurs, params, chemin)
+    generer_html(divergences, tickers, vues, erreurs, params, chemin, anciennes)
     print(f"\n📄 Rapport : {chemin}")
     if args.ouvrir:
         webbrowser.open(chemin.resolve().as_uri())
