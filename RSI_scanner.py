@@ -59,12 +59,11 @@ DEFAUTS = {
         "D": {"courte": 15, "moyenne": 40},
         "W": {"courte": 4, "moyenne": 12},
     },
-    "rsi_delta_min": 4.0,
+    "rsi_delta_min": 6.0,
     "retracement_max_pct": 45.0,
     "zone_rsi": {"actif": True, "surachat": 60.0, "survente": 40.0},
-    "tolerance_rsi_pivot_bougies": 3,
-    "deplacement_max_rsi_bougies": {"D": 8, "W": 4},
     "verifier_ligne": True,
+    "verifier_ligne_rsi": False,
     "tolerance_cassure_prix_pct": 0.5,
     "tolerance_cassure_rsi": 2.0,
     "autoriser_pivot_provisoire": True,
@@ -218,8 +217,16 @@ def detecter_pivots(valeurs, gauche, droite, sens, autoriser_provisoire=True):
         v = valeurs[i]
         if np.isnan(v):
             continue
+        # Les NaN sont écartés des fenêtres plutôt que de disqualifier le pivot :
+        # le RSI n'a pas de valeur sur ses premières bougies, et une comparaison
+        # avec NaN étant toujours fausse, tout pivot proche du début de série
+        # était silencieusement perdu.
         fen_g = valeurs[i - gauche:i]
         fen_d = valeurs[i + 1:i + 1 + dispo]
+        fen_g = fen_g[~np.isnan(fen_g)]
+        fen_d = fen_d[~np.isnan(fen_d)]
+        if fen_g.size == 0 or fen_d.size == 0:
+            continue
         if sens == "bas":
             ok = np.all(v < fen_g) and np.all(v <= fen_d)
         else:
@@ -229,58 +236,27 @@ def detecter_pivots(valeurs, gauche, droite, sens, autoriser_provisoire=True):
     return pivots
 
 
-def rsi_au_pivot(rsi_vals, idx, tolerance, sens, deplacement_max):
+def pivot_intermediaire_casse(pivots, a, b, cle, sens, tolerance_abs):
     """
-    Valeur du RSI correspondant à un pivot de prix.
+    Vrai si un pivot intermédiaire traverse la droite reliant `a` à `b`.
 
-    L'extremum du RSI est rarement aligné sur celui du prix, et il peut en être
-    éloigné de plusieurs bougies. Se contenter de la valeur dans une fenêtre
-    étroite fait tomber la droite du RSI sur une pente au lieu du sommet ou du
-    creux — le tracé devient faux.
-
-    On part donc du pivot de prix et on remonte de proche en proche jusqu'à
-    l'extremum local du RSI : à chaque tour on cherche l'extremum dans une
-    fenêtre de +/- `tolerance`, on s'y recentre, et on s'arrête dès qu'on n'a
-    plus bougé. Le déplacement total reste borné par `deplacement_max`, faute de
-    quoi on dériverait vers un extremum sans rapport avec le pivot de départ.
+    On ne teste que les pivots, pas chaque bougie : les bougies qui entourent
+    immédiatement un point d'ancrage sont presque toujours du mauvais côté d'une
+    droite en pente, ce qui rejetait les divergences les plus franches. Ce qui
+    invalide vraiment une figure, c'est un creux — ou un sommet — intermédiaire
+    plus extrême que la droite, autrement dit un pivot.
     """
-    n = len(rsi_vals)
-    pos = idx
-    for _ in range(deplacement_max + 1):
-        a = max(0, pos - tolerance)
-        b = min(n, pos + tolerance + 1)
-        fenetre = rsi_vals[a:b]
-        if np.all(np.isnan(fenetre)):
-            return None, None
-        j = int(np.nanargmin(fenetre)) if sens == "bas" else int(np.nanargmax(fenetre))
-        candidat = a + j
-        if candidat == pos or abs(candidat - idx) > deplacement_max:
-            break
-        pos = candidat
-    if np.isnan(rsi_vals[pos]):
-        return None, None
-    return float(rsi_vals[pos]), pos
-
-
-def ligne_cassee(valeurs, i1, v1, i2, v2, sens, tolerance_abs):
-    """
-    Vrai si la droite reliant les deux pivots est traversée entre eux.
-
-    Une divergence dont la ligne de tendance est cassée par une bougie
-    intermédiaire n'est pas une divergence valide : les deux points n'appartiennent
-    pas au même mouvement.
-    """
-    if i2 <= i1 + 1:
+    ecart_idx = b["idx"] - a["idx"]
+    if ecart_idx <= 1:
         return False
-    for k in range(i1 + 1, i2):
-        v = valeurs[k]
-        if np.isnan(v):
+    for q in pivots:
+        if not (a["idx"] < q["idx"] < b["idx"]):
             continue
-        ligne = v1 + (v2 - v1) * (k - i1) / (i2 - i1)
+        ligne = a[cle] + (b[cle] - a[cle]) * (q["idx"] - a["idx"]) / ecart_idx
         marge = tolerance_abs(ligne)
-        if sens == "bas" and v < ligne - marge:
+        if sens == "bas" and q[cle] < ligne - marge:
             return True
-        if sens == "haut" and v > ligne + marge:
+        if sens == "haut" and q[cle] > ligne + marge:
             return True
     return False
 
@@ -332,25 +308,26 @@ def detecter_divergences(df, vue, params):
 
     cfg_pivot = params["pivot"][vue]
     cfg_ecart = params["ecart_bougies"][vue]
-    tol_rsi_p = params["tolerance_rsi_pivot_bougies"]
-    depl_rsi  = params["deplacement_max_rsi_bougies"][vue]
     delta_min = params["rsi_delta_min"]
     cfg_retr  = params.get("retracement_max_pct", 0)
     cfg_zone  = params.get("zone_rsi", {})
 
-    pivots_bas  = detecter_pivots(lows,  cfg_pivot["gauche"], cfg_pivot["droite"],
-                                  "bas",  params["autoriser_pivot_provisoire"])
-    pivots_haut = detecter_pivots(highs, cfg_pivot["gauche"], cfg_pivot["droite"],
-                                  "haut", params["autoriser_pivot_provisoire"])
+    # Les pivots sont cherchés sur le RSI lui-même, et le prix est lu sur la même
+    # bougie. C'est ce qui garantit qu'un point du RSI est toujours un vrai
+    # sommet ou un vrai creux de l'indicateur, et que les deux droites partagent
+    # exactement les mêmes bornes : un seul indice sert aux deux courbes.
+    def pivots_sur_rsi(sens):
+        serie_prix = lows if sens == "bas" else highs
+        pivots = detecter_pivots(rsi_vals, cfg_pivot["gauche"], cfg_pivot["droite"],
+                                 sens, params["autoriser_pivot_provisoire"])
+        for p in pivots:
+            p["rsi"] = p.pop("prix")          # detecter_pivots renvoie la valeur lue
+            p["rsi_idx"] = p["idx"]
+            p["prix"] = float(serie_prix[p["idx"]])
+        return [p for p in pivots if not np.isnan(p["prix"])]
 
-    # RSI associé à chaque pivot de prix
-    for p in pivots_bas:
-        p["rsi"], p["rsi_idx"] = rsi_au_pivot(rsi_vals, p["idx"], tol_rsi_p, "bas", depl_rsi)
-    for p in pivots_haut:
-        p["rsi"], p["rsi_idx"] = rsi_au_pivot(rsi_vals, p["idx"], tol_rsi_p, "haut", depl_rsi)
-
-    pivots_bas  = [p for p in pivots_bas  if p["rsi"] is not None]
-    pivots_haut = [p for p in pivots_haut if p["rsi"] is not None]
+    pivots_bas  = pivots_sur_rsi("bas")
+    pivots_haut = pivots_sur_rsi("haut")
 
     candidats = []
 
@@ -360,7 +337,6 @@ def detecter_divergences(df, vue, params):
 
         sens    = meta["sens"]
         pivots  = pivots_bas if sens == "bas" else pivots_haut
-        serie_p = lows if sens == "bas" else highs
         cachee  = type_cle.endswith("cachee")
 
         for j in range(1, len(pivots)):
@@ -403,12 +379,13 @@ def detecter_divergences(df, vue, params):
                 if params["verifier_ligne"]:
                     tol_p = params["tolerance_cassure_prix_pct"] / 100.0
                     tol_r = params["tolerance_cassure_rsi"]
-                    if ligne_cassee(serie_p, a["idx"], a["prix"], b["idx"], b["prix"],
-                                    sens, lambda ligne: abs(ligne) * tol_p):
+                    if pivot_intermediaire_casse(pivots, a, b, "prix", sens,
+                                                 lambda ligne: abs(ligne) * tol_p):
                         continue
-                    if ligne_cassee(rsi_vals, a["rsi_idx"], a["rsi"], b["rsi_idx"], b["rsi"],
-                                    sens, lambda _ligne: tol_r):
-                        continue
+                    if params.get("verifier_ligne_rsi", False):
+                        if pivot_intermediaire_casse(pivots, a, b, "rsi", sens,
+                                                     lambda _ligne: tol_r):
+                            continue
 
                 # Filtre de retracement : deux sommets séparés par une chute
                 # profonde appartiennent à des phases de marché différentes.
@@ -527,21 +504,8 @@ def rendre_svg(df, rsi_serie, d, largeur=440, h_prix=104, h_rsi=58, h_dates=15):
         return decalage + haut - (valeur - vmin) * (haut - 2 * pad) / (vmax - vmin) - pad
 
     p_min, p_max = float(np.nanmin(lows)), float(np.nanmax(highs))
-    # La droite du RSI passe par les deux extremums réels, mais on la prolonge
-    # jusqu'aux bornes du pivot de prix : les deux traits commencent et
-    # s'arrêtent alors exactement à la même verticale, comme une ligne de
-    # tendance qu'on prolonge à la main. Les points restent posés sur la courbe.
-    ia, ib = d["rsi_idx_a"], d["rsi_idx_b"]
-    if ib != ia:
-        pente = (d["rsi_b"] - d["rsi_a"]) / (ib - ia)
-        rsi_gauche = d["rsi_a"] + pente * (d["idx_a"] - ia)
-        rsi_droite = d["rsi_a"] + pente * (d["idx_b"] - ia)
-    else:
-        rsi_gauche = rsi_droite = d["rsi_a"]
-
     r_min, r_max = float(np.nanmin(rsis)), float(np.nanmax(rsis))
-    r_min = min(r_min, 28.0, rsi_gauche, rsi_droite)
-    r_max = max(r_max, 72.0, rsi_gauche, rsi_droite)
+    r_min, r_max = min(r_min, 28.0), max(r_max, 72.0)
 
     def y_prix(v):
         return echelle(v, p_min, p_max, h_prix, 0)
@@ -606,11 +570,11 @@ def rendre_svg(df, rsi_serie, d, largeur=440, h_prix=104, h_rsi=58, h_dates=15):
 {"".join(bougies)}
 <polyline points="{ligne_rsi}" fill="none" stroke="#378add" stroke-width="1.1"/>
 <line x1="{x(d['idx_a']):.1f}" y1="{y_prix(d['prix_a']):.1f}" x2="{x(d['idx_b']):.1f}" y2="{y_prix(d['prix_b']):.1f}" stroke="{couleur}" stroke-width="1.5"/>
-<line x1="{x(d['idx_a']):.1f}" y1="{y_rsi(rsi_gauche):.1f}" x2="{x(d['idx_b']):.1f}" y2="{y_rsi(rsi_droite):.1f}" stroke="{couleur}" stroke-width="1.5"/>
+<line x1="{x(d['idx_a']):.1f}" y1="{y_rsi(d['rsi_a']):.1f}" x2="{x(d['idx_b']):.1f}" y2="{y_rsi(d['rsi_b']):.1f}" stroke="{couleur}" stroke-width="1.5"/>
 <circle cx="{x(d['idx_a']):.1f}" cy="{y_prix(d['prix_a']):.1f}" r="2.6" fill="{couleur}"/>
 <circle cx="{x(d['idx_b']):.1f}" cy="{y_prix(d['prix_b']):.1f}" r="2.6" fill="{couleur}"/>
-<circle cx="{x(d['rsi_idx_a']):.1f}" cy="{y_rsi(d['rsi_a']):.1f}" r="2.6" fill="{couleur}"/>
-<circle cx="{x(d['rsi_idx_b']):.1f}" cy="{y_rsi(d['rsi_b']):.1f}" r="2.6" fill="{couleur}"/>
+<circle cx="{x(d['idx_a']):.1f}" cy="{y_rsi(d['rsi_a']):.1f}" r="2.6" fill="{couleur}"/>
+<circle cx="{x(d['idx_b']):.1f}" cy="{y_rsi(d['rsi_b']):.1f}" r="2.6" fill="{couleur}"/>
 {"".join(reperes)}
 </svg>"""
 

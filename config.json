@@ -40,8 +40,7 @@
         "moyenne": 12
       }
     },
-    "rsi_delta_min": 4.0,
-    "tolerance_rsi_pivot_bougies": 3,
+    "rsi_delta_min": 6.0,
     "verifier_ligne": true,
     "tolerance_cassure_prix_pct": 0.5,
     "tolerance_cassure_rsi": 2.0,
@@ -62,10 +61,6 @@
       "confirmees_seulement": true
     },
     "retracement_max_pct": 45.0,
-    "deplacement_max_rsi_bougies": {
-      "D": 8,
-      "W": 4
-    },
     "zone_rsi": {
       "actif": true,
       "surachat": 60.0,
@@ -76,6 +71,7 @@
         "D": 40,
         "W": 13
       }
-    }
+    },
+    "verifier_ligne_rsi": false
   }
 }

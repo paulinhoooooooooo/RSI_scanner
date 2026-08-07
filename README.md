@@ -157,21 +157,19 @@ signal d'un simple mouvement du marché.
 
 ## Comment la détection fonctionne
 
-1. **Pivots** — un creux est un point plus bas que les 5 bougies précédentes et
-   les 5 suivantes (3 et 3 en vue W). Largeur réglable.
-2. **RSI du pivot** — le programme part du pivot de prix et **remonte jusqu'au
-   sommet ou au creux réel du RSI**, jusqu'à 8 bougies plus loin en vue D (4 en
-   vue W). Les extremums du prix et du RSI ne tombent pas le même jour : se
-   contenter de la valeur au jour du pivot pose la droite sur une pente, et le
-   tracé devient faux. Sur le graphique, la droite du RSI passe par ces deux
-   extremums puis est **prolongée jusqu'aux bornes des pivots de prix** : les
-   deux traits commencent et s'arrêtent ainsi à la même verticale, tandis que
-   les points restent posés sur la courbe.
-3. **Appariement** — toutes les paires de pivots dans la plage de portée sont
+1. **Pivots** — ils sont cherchés **sur le RSI lui-même** : un creux est une
+   valeur plus basse que les 5 bougies précédentes et les 5 suivantes (3 et 3 en
+   vue W). Le prix est ensuite lu sur cette même bougie. Un seul indice sert
+   donc aux deux courbes : le point du RSI est toujours un vrai extremum de
+   l'indicateur, et les deux droites partagent exactement les mêmes bornes.
+2. **Appariement** — toutes les paires de pivots dans la plage de portée sont
    testées, la géométrie prix/RSI déterminant le type de divergence.
-4. **Validation** — une paire dont la droite de tendance est traversée par une
-   bougie intermédiaire est rejetée : les deux points n'appartiennent pas au
-   même mouvement.
+3. **Validation** — une paire est rejetée si un **pivot intermédiaire**
+   traverse la droite de tendance : un creux plus bas entre les deux invalide la
+   figure. Le contrôle ne porte que sur les pivots, pas sur chaque bougie — les
+   bougies qui entourent un point d'ancrage sont presque toujours du mauvais
+   côté d'une droite en pente, ce qui écartait les divergences les plus
+   franches.
 
 La vue W est reconstruite en agrégeant les bougies journalières (clôture
 vendredi) : un seul téléchargement par ticker sert les deux vues, ce qui
@@ -252,7 +250,7 @@ si tu passes `confirmees_seulement` à `false`.
   "D": { "min": 5, "max": 130 },       ← portée min/max d'une divergence
   "W": { "min": 4, "max": 60 }
 },
-"rsi_delta_min": 4.0,                  ← écart RSI minimum (points) — anti-bruit
+"rsi_delta_min": 6.0,                  ← écart RSI minimum (points) — anti-bruit
 "deplacement_max_rsi_bougies": {       ← distance max entre pivot de prix
   "D": 8, "W": 4                       ←   et extremum du RSI
 },
@@ -277,7 +275,7 @@ si tu passes `confirmees_seulement` à `false`.
 ```
 
 **Trop d'alertes ?** Dans l'ordre d'efficacité : monte `rsi_delta_min` (6 à 8),
-baisse `retracement_max_pct` (30 — mais lance `test_motif_reference.py` après,
+monte encore `rsi_delta_min` (8 à 10), baisse `retracement_max_pct` (30 — mais lance `test_motif_reference.py` après,
 en dessous de 26 le motif de référence n'est plus détecté), monte `zone_rsi.surachat` à 70 et baisse `survente` à 30, augmente
 `pivot.D.gauche`/`droite` (7 ou 8), puis `rsi_delta_min` (6 à 8). Des pivots
 plus larges donnent moins de signaux, mais plus fiables.

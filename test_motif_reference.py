@@ -31,7 +31,7 @@ def construire_motif():
     le RSI d'un creux à l'autre alors que le prix revient au même niveau.
     """
     segments = [
-        (100.0, 40),   # préambule
+        (100.0, 200),  # préambule — donne à la vue W un historique réaliste
         (100.0, 25),   # ligne de départ
         (78.0,  16),   # chute rapide      -> creux 1, RSI très bas
         (92.0,  26),   # rebond
@@ -54,7 +54,7 @@ def construire_motif():
             "Close": prix,
             "Volume": rng.integers(1_000_000, 5_000_000, len(prix)),
         },
-        index=pd.bdate_range("2025-09-01", periods=len(prix)),
+        index=pd.bdate_range("2024-11-01", periods=len(prix)),
     )
 
 
