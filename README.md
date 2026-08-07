@@ -1,0 +1,218 @@
+# RSI Scanner — Divergences RSI en vue D et vue W
+
+Programme **à la demande** : tu le lances, il scanne toute ta watchlist en vue
+journalière **et** hebdomadaire, ouvre un rapport HTML et t'envoie une alerte
+Telegram pour chaque divergence RSI récente.
+
+```bash
+python3 RSI_scanner.py --ouvrir
+```
+
+---
+
+## Installation (Mac)
+
+```bash
+# 1. Récupérer le programme
+git clone https://github.com/paulinhoooooooooo/RSI_scanner.git
+cd RSI_scanner
+
+# 2. Installer les dépendances
+pip3 install -r requirements.txt
+
+# 3. Premier test, sans Telegram
+python3 RSI_scanner.py --tickers AAPL --no-telegram --ouvrir
+```
+
+Si le rapport s'ouvre dans ton navigateur, tout fonctionne.
+
+---
+
+## Configurer Telegram
+
+Deux méthodes, au choix.
+
+**Méthode 1 — variables d'environnement (recommandée).** Ton token ne se
+retrouve jamais dans un fichier versionné :
+
+```bash
+export TELEGRAM_BOT_TOKEN="123456789:AAFxxxx..."
+export TELEGRAM_CHAT_ID="123456789"
+python3 RSI_scanner.py
+```
+
+Pour ne pas les retaper à chaque fois, ajoute ces deux lignes à la fin de ton
+`~/.zshrc`.
+
+**Méthode 2 — `config.json`.** Remplace `REMPLACE_PAR_TON_TOKEN` et
+`REMPLACE_PAR_TON_CHAT_ID` par tes valeurs. Plus simple, mais ne pousse jamais
+ce fichier sur GitHub ensuite.
+
+Les variables d'environnement priment sur `config.json` quand elles existent.
+
+### Obtenir un token et un chat_id
+
+1. Dans Telegram, cherche **@BotFather**, envoie `/newbot` et suis les étapes
+2. BotFather te donne le **token**
+3. Envoie `/start` à ton bot
+4. Ouvre `https://api.telegram.org/botTON_TOKEN/getUpdates` dans un navigateur
+5. Le `"id"` dans `"chat"` est ton **chat_id**
+
+---
+
+## Ta watchlist — `tickers.txt`
+
+Un ticker par ligne, les lignes commençant par `#` sont ignorées.
+
+| Marché | Suffixe | Exemple |
+|---|---|---|
+| US | aucun | `AAPL`, `NVDA` |
+| Euronext Paris | `.PA` | `LVMH.PA` |
+| Frankfurt | `.DE` | `SAP.DE` |
+| Madrid | `.MC` | `SAN.MC` |
+| Milan | `.MI` | `ENI.MI` |
+| Indices | `^` | `^GSPC` (S&P 500) |
+
+---
+
+## Options
+
+| Option | Effet |
+|---|---|
+| `--vue D` / `--vue W` | Une seule vue (défaut : les deux) |
+| `--tickers AAPL,NVDA` | Ignore `tickers.txt` pour ce scan |
+| `--no-telegram` | Génère le rapport sans envoyer d'alerte |
+| `--toutes` | Alerte aussi sur les divergences anciennes ou non confirmées |
+| `--reset-etat` | Oublie ce qui a déjà été alerté et renvoie tout |
+| `--sortie chemin.html` | Choisit le fichier du rapport |
+| `--ouvrir` | Ouvre le rapport à la fin du scan |
+
+Le rapport est écrit dans `rapports/divergences_AAAAMMJJ_HHMM.html`. Il contient,
+pour chaque divergence, un mini-graphique prix + RSI avec les deux droites
+tracées.
+
+---
+
+## Les quatre types de divergences
+
+| Type | Prix | RSI | Lecture |
+|---|---|---|---|
+| 🟢 Haussière **régulière** | creux plus bas (ou égal) | creux plus haut | la baisse s'essouffle → retournement à la hausse |
+| 🔴 Baissière **régulière** | sommet plus haut (ou égal) | sommet plus bas | la hausse s'essouffle → retournement à la baisse |
+| 🔵 Haussière **cachée** | creux plus haut | creux plus bas | continuation de la tendance haussière |
+| 🟠 Baissière **cachée** | sommet plus bas | sommet plus haut | continuation de la tendance baissière |
+
+Par défaut seules les **régulières** sont actives : les cachées génèrent
+beaucoup plus de signaux. Pour les activer, passe-les à `true` dans
+`config.json` → `divergence.types`.
+
+---
+
+## Divergences courtes ET longues
+
+Le programme n'appaire pas seulement les deux derniers creux : il teste **toutes
+les paires de pivots** distantes de 5 à 130 bougies en vue D (4 à 60 en vue W).
+Une divergence étalée sur cinq mois est donc détectée au même titre qu'une
+divergence sur deux semaines. Chacune est étiquetée `courte`, `moyenne` ou
+`longue` selon sa portée.
+
+Les creux **quasi plats** comptent : un double creux au même niveau surmonté
+d'un RSI qui remonte est une divergence. `tolerance_egalite_prix_pct` (0,5 % par
+défaut) définit ce que « au même niveau » veut dire.
+
+---
+
+## Comment la détection fonctionne
+
+1. **Pivots** — un creux est un point plus bas que les 5 bougies précédentes et
+   les 5 suivantes (3 et 3 en vue W). Largeur réglable.
+2. **RSI du pivot** — relevé sur une fenêtre de ±2 bougies autour du pivot de
+   prix : les extremums du prix et du RSI sont rarement alignés au jour près.
+3. **Appariement** — toutes les paires de pivots dans la plage de portée sont
+   testées, la géométrie prix/RSI déterminant le type de divergence.
+4. **Validation** — une paire dont la droite de tendance est traversée par une
+   bougie intermédiaire est rejetée : les deux points n'appartiennent pas au
+   même mouvement.
+
+La vue W est reconstruite en agrégeant les bougies journalières (clôture
+vendredi) : un seul téléchargement par ticker sert les deux vues, ce qui
+garantit leur cohérence et divise par deux les requêtes.
+
+---
+
+## Confirmée vs en formation
+
+Un pivot n'est certain qu'une fois ses bougies de droite passées. Une divergence
+dont le dernier pivot est encore dans cette fenêtre est marquée **en
+formation** : elle est réelle aujourd'hui, mais les prochaines bougies peuvent
+l'invalider.
+
+Le rapport les affiche toutes ; Telegram n'envoie que les **confirmées**, sauf
+si tu passes `confirmees_seulement` à `false`.
+
+---
+
+## Réglages — `config.json`, section `divergence`
+
+```json
+"pivot": {
+  "D": { "gauche": 5, "droite": 5 },   ← largeur des pivots en vue D
+  "W": { "gauche": 3, "droite": 3 }    ←        idem en vue W
+},
+"ecart_bougies": {
+  "D": { "min": 5, "max": 130 },       ← portée min/max d'une divergence
+  "W": { "min": 4, "max": 60 }
+},
+"rsi_delta_min": 4.0,                  ← écart RSI minimum (points) — anti-bruit
+"tolerance_egalite_prix_pct": 0.5,     ← ce qui compte comme "creux égal"
+"verifier_ligne": true,                ← rejette les droites cassées
+"max_par_type": 3,                     ← nb max de divergences par type et par vue
+"telegram": {
+  "fraicheur_max_bougies": { "D": 10, "W": 4 },  ← n'alerte que sur le récent
+  "confirmees_seulement": true
+}
+```
+
+**Trop d'alertes ?** Augmente `pivot.D.gauche`/`droite` (7 ou 8) ou
+`rsi_delta_min` (6 à 8). Des pivots plus larges donnent moins de signaux, mais
+plus fiables.
+
+**Pas assez ?** Fais l'inverse, et éventuellement active les divergences
+cachées.
+
+Toutes les clés ont une valeur par défaut interne : tu peux n'écrire dans
+`config.json` que celles que tu veux modifier.
+
+---
+
+## Pas de doublons entre deux lancements
+
+Les divergences déjà envoyées sont mémorisées dans `.divergence_etat.json`. Tu
+peux relancer le programme plusieurs fois par jour sans recevoir deux fois la
+même alerte. Pour tout réenvoyer : `--reset-etat`.
+
+---
+
+## Lancement automatique chaque jour
+
+Le programme est prévu pour être lancé à la main, mais si tu veux un scan
+quotidien, `cron` suffit. `crontab -e`, puis :
+
+```
+0 19 * * 1-5 cd /chemin/vers/RSI_scanner && /usr/bin/python3 RSI_scanner.py >> scan.log 2>&1
+```
+
+Un scan à 19 h, du lundi au vendredi.
+
+---
+
+## Limites à connaître
+
+- Les données viennent de **Yahoo Finance** : un ticker mal orthographié ne
+  renvoie rien. Le rapport liste ces échecs dans « Tickers non analysés » plutôt
+  que de s'arrêter.
+- Une divergence **n'est pas un signal d'achat** : c'est un signe
+  d'essoufflement, qui peut durer longtemps avant que le prix ne retourne, voire
+  ne jamais se concrétiser.
+- Le premier scan télécharge 3 ans d'historique par ticker — compte une bonne
+  minute pour une vingtaine de valeurs.

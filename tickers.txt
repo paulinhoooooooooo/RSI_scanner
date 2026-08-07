@@ -1,0 +1,35 @@
+# Liste des tickers à surveiller
+# Un ticker par ligne
+# Suffixe .PA pour Euronext Paris (ex: LVMH.PA)
+# Suffixe .MC pour Madrid, .DE pour Frankfurt, etc.
+# Pas de suffixe pour les actions US (AAPL, TSLA...)
+# Les lignes commençant par # sont ignorées
+
+# --- CAC 40 (exemples) ---
+SAN.PA
+
+# --- US Tech ---
+AAPL
+MSFT
+NVDA
+GOOGL
+META
+TSLA
+AMZN
+QQQ
+SPX
+
+# --- Health ---
+JNJ
+AMGEN
+LLY
+UNH
+MRK
+SAN
+ABBV
+HON
+IPN
+MRNA
+
+# --- GOLD ---
+GOLD

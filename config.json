@@ -1,0 +1,45 @@
+{
+  "telegram": {
+    "bot_token": "REMPLACE_PAR_TON_TOKEN",
+    "chat_id": "REMPLACE_PAR_TON_CHAT_ID"
+  },
+  "divergence": {
+    "periode_historique": "3y",
+    "rsi_periode": 14,
+    "vues": {
+      "D": true,
+      "W": true
+    },
+    "pivot": {
+      "D": { "gauche": 5, "droite": 5 },
+      "W": { "gauche": 3, "droite": 3 }
+    },
+    "ecart_bougies": {
+      "D": { "min": 5, "max": 130 },
+      "W": { "min": 4, "max": 60 }
+    },
+    "seuils_duree": {
+      "D": { "courte": 15, "moyenne": 40 },
+      "W": { "courte": 4, "moyenne": 12 }
+    },
+    "rsi_delta_min": 4.0,
+    "tolerance_egalite_prix_pct": 0.5,
+    "tolerance_rsi_pivot_bougies": 2,
+    "verifier_ligne": true,
+    "tolerance_cassure_prix_pct": 0.5,
+    "tolerance_cassure_rsi": 2.0,
+    "autoriser_pivot_provisoire": true,
+    "max_par_type": 3,
+    "types": {
+      "haussiere_reguliere": true,
+      "baissiere_reguliere": true,
+      "haussiere_cachee": false,
+      "baissiere_cachee": false
+    },
+    "telegram": {
+      "actif": true,
+      "fraicheur_max_bougies": { "D": 10, "W": 4 },
+      "confirmees_seulement": true
+    }
+  }
+}
