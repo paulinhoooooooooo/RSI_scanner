@@ -184,10 +184,16 @@ pratique.
 **Sens opposés obligatoire.** Le prix et le RSI ne doivent jamais aller dans la
 même direction — deux droites parallèles sont une tendance, pas une divergence.
 
-**Écart intermédiaire limité** (`retracement_max_pct`, 20 % par défaut). Deux
-sommets séparés par une chute de 30 % appartiennent à deux phases de marché
-différentes : les relier donne une droite valide et un signal sans valeur. Le
-rapport affiche cet écart pour chaque ligne, ce qui permet de juger sur pièce.
+**Écart intermédiaire plafonné** (`retracement_max_pct`, 45 % par défaut).
+Au-delà, les deux pivots appartiennent à des régimes de prix sans rapport.
+
+Ce plafond est volontairement large. Un rebond marqué entre les deux creux est
+**normal** — c'est même la cassure de structure au cœur du motif recherché, qui
+mesure 25 % sur le cas de référence. Un plafond serré écarterait donc la figure
+que le programme est fait pour trouver. La contrepartie est que des paires
+douteuses passent : le rapport affiche l'écart pour chaque ligne, colonne
+« Écart interm. », ce qui permet de juger sur pièce et de resserrer le seuil si
+tu le souhaites.
 
 **RSI en zone** (`zone_rsi`). Une divergence baissière suppose que le RSI a
 atteint le surachat (≥ 60 par défaut), une haussière qu'il a touché la survente
@@ -249,8 +255,9 @@ si tu passes `confirmees_seulement` à `false`.
 }
 ```
 
-**Trop d'alertes ?** Dans l'ordre d'efficacité : baisse `retracement_max_pct`
-(10 ou 12), monte `zone_rsi.surachat` à 70 et baisse `survente` à 30, augmente
+**Trop d'alertes ?** Dans l'ordre d'efficacité : monte `rsi_delta_min` (6 à 8),
+baisse `retracement_max_pct` (30 — mais lance `test_motif_reference.py` après,
+en dessous de 26 le motif de référence n'est plus détecté), monte `zone_rsi.surachat` à 70 et baisse `survente` à 30, augmente
 `pivot.D.gauche`/`droite` (7 ou 8), puis `rsi_delta_min` (6 à 8). Des pivots
 plus larges donnent moins de signaux, mais plus fiables.
 
@@ -290,6 +297,21 @@ déclenchée tous les jours à l'heure voulue, action « Démarrer un programme 
 Un scan à 19 h, du lundi au vendredi.
 
 ---
+
+## Le motif de référence
+
+`test_motif_reference.py` reproduit en données la figure que le programme doit
+impérativement trouver : une base de six mois, des creux quasi plats très
+légèrement descendants, un RSI qui remonte franchement d'un creux à l'autre, et
+un fort rebond intermédiaire.
+
+```bash
+python3 test_motif_reference.py
+```
+
+Il vérifie que la divergence longue est détectée en vue D **et** en vue W. Lance-le
+après chaque modification des seuils anti-bruit : c'est le garde-fou qui empêche
+un réglage trop strict d'écarter silencieusement la figure recherchée.
 
 ## Limites à connaître
 

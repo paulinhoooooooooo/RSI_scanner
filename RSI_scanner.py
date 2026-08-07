@@ -52,7 +52,7 @@ DEFAUTS = {
         "W": {"gauche": 3, "droite": 3},
     },
     "ecart_bougies": {
-        "D": {"min": 5, "max": 130},
+        "D": {"min": 5, "max": 160},
         "W": {"min": 4, "max": 60},
     },
     "seuils_duree": {
@@ -60,7 +60,7 @@ DEFAUTS = {
         "W": {"courte": 4, "moyenne": 12},
     },
     "rsi_delta_min": 4.0,
-    "retracement_max_pct": 20.0,
+    "retracement_max_pct": 45.0,
     "zone_rsi": {"actif": True, "surachat": 60.0, "survente": 40.0},
     "tolerance_rsi_pivot_bougies": 3,
     "deplacement_max_rsi_bougies": {"D": 8, "W": 4},
@@ -709,7 +709,7 @@ Filtres anti-bruit : écart intermédiaire &le; {params['retracement_max_pct']}%
             fraicheur = (f'<div class="sub">il y a {d["fraicheur"]} '
                          f'{VUES_META[vue]["unite"]}</div>')
             retr = d.get("retracement_pct", 0.0)
-            retr_cls = "bn" if retr <= 10 else ("bi" if retr <= 20 else "bo")
+            retr_cls = "bn" if retr <= 15 else ("bi" if retr <= 30 else "bo")
             html.append(f"""<tr class="{cls}">
 <td class="tk">{d['ticker']}</td>
 <td><span class="badge vue-{d['vue']}">{d['vue']}</span></td>
