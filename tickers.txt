@@ -17,11 +17,11 @@ META
 TSLA
 AMZN
 QQQ
-SPX
+^GSPC
 
 # --- Health ---
 JNJ
-AMGEN
+AMGN
 LLY
 UNH
 MRK
