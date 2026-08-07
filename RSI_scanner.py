@@ -28,6 +28,14 @@ import pandas as pd
 import requests
 import yfinance as yf
 
+# La console Windows est souvent en cp1252 : sans cela, le premier emoji
+# affiché fait planter le programme sur un UnicodeEncodeError.
+for _flux in (sys.stdout, sys.stderr):
+    try:
+        _flux.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        pass
+
 BASE_DIR      = Path(__file__).parent
 CONFIG_FILE   = BASE_DIR / "config.json"
 TICKERS_FILE  = BASE_DIR / "tickers.txt"

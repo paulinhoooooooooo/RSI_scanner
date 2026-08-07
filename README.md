@@ -10,7 +10,31 @@ python3 RSI_scanner.py --ouvrir
 
 ---
 
-## Installation (Mac)
+## Installation — Windows (PowerShell)
+
+```powershell
+# 1. Se placer dans son dossier personnel
+cd $HOME
+
+# 2. Récupérer le programme (crée le dossier RSI_scanner)
+git clone https://github.com/paulinhoooooooooo/RSI_scanner.git
+cd RSI_scanner
+
+# 3. Installer les dépendances
+python -m pip install -r requirements.txt
+
+# 4. Premier test, sans Telegram
+python RSI_scanner.py --tickers AAPL --no-telegram --ouvrir
+```
+
+Si `git` est introuvable, installe-le depuis https://git-scm.com/download/win, ou
+télécharge le dépôt en ZIP depuis GitHub (bouton vert **Code → Download ZIP**)
+et décompresse-le dans ton dossier personnel.
+
+Le dépôt étant privé, `git clone` demandera de t'identifier : une fenêtre de
+navigateur s'ouvre, tu te connectes à GitHub, et c'est mémorisé pour la suite.
+
+## Installation — Mac / Linux
 
 ```bash
 # 1. Récupérer le programme
@@ -25,6 +49,9 @@ python3 RSI_scanner.py --tickers AAPL --no-telegram --ouvrir
 ```
 
 Si le rapport s'ouvre dans ton navigateur, tout fonctionne.
+
+> Sous Windows, remplace `python3` par `python` et `pip3` par `python -m pip`
+> dans toutes les commandes de ce README.
 
 ---
 
@@ -195,8 +222,16 @@ même alerte. Pour tout réenvoyer : `--reset-etat`.
 
 ## Lancement automatique chaque jour
 
-Le programme est prévu pour être lancé à la main, mais si tu veux un scan
-quotidien, `cron` suffit. `crontab -e`, puis :
+Le programme est prévu pour être lancé à la main. Pour un scan quotidien
+automatique :
+
+**Windows** — ouvre le *Planificateur de tâches*, crée une tâche de base
+déclenchée tous les jours à l'heure voulue, action « Démarrer un programme » :
+- Programme : `python`
+- Arguments : `RSI_scanner.py`
+- Commencer dans : le chemin du dossier `RSI_scanner`
+
+**Mac / Linux** — `crontab -e`, puis :
 
 ```
 0 19 * * 1-5 cd /chemin/vers/RSI_scanner && /usr/bin/python3 RSI_scanner.py >> scan.log 2>&1
