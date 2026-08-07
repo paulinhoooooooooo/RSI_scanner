@@ -163,7 +163,10 @@ signal d'un simple mouvement du marché.
    sommet ou au creux réel du RSI**, jusqu'à 8 bougies plus loin en vue D (4 en
    vue W). Les extremums du prix et du RSI ne tombent pas le même jour : se
    contenter de la valeur au jour du pivot pose la droite sur une pente, et le
-   tracé devient faux.
+   tracé devient faux. Sur le graphique, la droite du RSI passe par ces deux
+   extremums puis est **prolongée jusqu'aux bornes des pivots de prix** : les
+   deux traits commencent et s'arrêtent ainsi à la même verticale, tandis que
+   les points restent posés sur la courbe.
 3. **Appariement** — toutes les paires de pivots dans la plage de portée sont
    testées, la géométrie prix/RSI déterminant le type de divergence.
 4. **Validation** — une paire dont la droite de tendance est traversée par une

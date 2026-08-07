@@ -527,8 +527,21 @@ def rendre_svg(df, rsi_serie, d, largeur=440, h_prix=104, h_rsi=58, h_dates=15):
         return decalage + haut - (valeur - vmin) * (haut - 2 * pad) / (vmax - vmin) - pad
 
     p_min, p_max = float(np.nanmin(lows)), float(np.nanmax(highs))
+    # La droite du RSI passe par les deux extremums réels, mais on la prolonge
+    # jusqu'aux bornes du pivot de prix : les deux traits commencent et
+    # s'arrêtent alors exactement à la même verticale, comme une ligne de
+    # tendance qu'on prolonge à la main. Les points restent posés sur la courbe.
+    ia, ib = d["rsi_idx_a"], d["rsi_idx_b"]
+    if ib != ia:
+        pente = (d["rsi_b"] - d["rsi_a"]) / (ib - ia)
+        rsi_gauche = d["rsi_a"] + pente * (d["idx_a"] - ia)
+        rsi_droite = d["rsi_a"] + pente * (d["idx_b"] - ia)
+    else:
+        rsi_gauche = rsi_droite = d["rsi_a"]
+
     r_min, r_max = float(np.nanmin(rsis)), float(np.nanmax(rsis))
-    r_min, r_max = min(r_min, 28.0), max(r_max, 72.0)
+    r_min = min(r_min, 28.0, rsi_gauche, rsi_droite)
+    r_max = max(r_max, 72.0, rsi_gauche, rsi_droite)
 
     def y_prix(v):
         return echelle(v, p_min, p_max, h_prix, 0)
@@ -593,7 +606,7 @@ def rendre_svg(df, rsi_serie, d, largeur=440, h_prix=104, h_rsi=58, h_dates=15):
 {"".join(bougies)}
 <polyline points="{ligne_rsi}" fill="none" stroke="#378add" stroke-width="1.1"/>
 <line x1="{x(d['idx_a']):.1f}" y1="{y_prix(d['prix_a']):.1f}" x2="{x(d['idx_b']):.1f}" y2="{y_prix(d['prix_b']):.1f}" stroke="{couleur}" stroke-width="1.5"/>
-<line x1="{x(d['rsi_idx_a']):.1f}" y1="{y_rsi(d['rsi_a']):.1f}" x2="{x(d['rsi_idx_b']):.1f}" y2="{y_rsi(d['rsi_b']):.1f}" stroke="{couleur}" stroke-width="1.5"/>
+<line x1="{x(d['idx_a']):.1f}" y1="{y_rsi(rsi_gauche):.1f}" x2="{x(d['idx_b']):.1f}" y2="{y_rsi(rsi_droite):.1f}" stroke="{couleur}" stroke-width="1.5"/>
 <circle cx="{x(d['idx_a']):.1f}" cy="{y_prix(d['prix_a']):.1f}" r="2.6" fill="{couleur}"/>
 <circle cx="{x(d['idx_b']):.1f}" cy="{y_prix(d['prix_b']):.1f}" r="2.6" fill="{couleur}"/>
 <circle cx="{x(d['rsi_idx_a']):.1f}" cy="{y_rsi(d['rsi_a']):.1f}" r="2.6" fill="{couleur}"/>
