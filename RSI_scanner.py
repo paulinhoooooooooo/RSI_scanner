@@ -78,7 +78,7 @@ DEFAUTS = {
         "fraicheur_max_bougies": {"D": 40, "W": 13},
     },
     "prioritaire": {
-        "fraicheur_confirmees": {"D": 5, "W": 1},
+        "rsi_delta_fort": 10.0,
     },
     "telegram": {
         "actif": True,
@@ -616,6 +616,7 @@ tbody tr.baiss{border-left:3px solid #a32d2d}
 .badge{display:inline-block;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:500;white-space:nowrap}
 .bg{background:#eaf3de;color:#3b6d11}.br{background:#fcebeb;color:#a32d2d}
 .bn{background:#f0ede8;color:#666}
+.fort{background:#fdf1e3;color:#ba7517;font-weight:600}
 .vue-D{background:#e8eef7;color:#2c4a70;font-weight:600}
 .vue-W{background:#f3e9f7;color:#5c2c70;font-weight:600}.bi{background:#e6f1fb;color:#185fa5}.bo{background:#fdf1e3;color:#ba7517}
 .mini{border-radius:6px;border:0.5px solid #eee}
@@ -636,8 +637,13 @@ def badge_duree(d):
             f'{d["span"]} {unite}</span>')
 
 
-def tableau_html(liste):
-    """Tableau complet pour une liste de divergences."""
+def tableau_html(liste, seuil_fort=None):
+    """
+    Tableau complet pour une liste de divergences.
+
+    `seuil_fort` marque d'une étoile les écarts de RSI les plus francs, ceux qui
+    méritent d'être regardés en premier.
+    """
     lignes = ['<div class="table-wrap"><table><thead><tr>'
               '<th>Ticker</th><th>Vue</th><th>Type</th><th>Portée</th>'
               '<th>Pivot 1</th><th>Pivot 2</th><th>Prix</th>'
@@ -648,6 +654,8 @@ def tableau_html(liste):
         meta = TYPES_META[d["type"]]
         cls  = "hauss" if meta["biais"] == "haussier" else "baiss"
         b_delta = "bg" if d["delta_rsi"] > 0 else "br"
+        fort = ('<span class="badge fort">★ forte</span>'
+                if seuil_fort and abs(d["delta_rsi"]) >= seuil_fort else "")
         statut = ('<span class="badge bg">confirmée</span>' if d["confirmee"]
                   else '<span class="badge bo">en formation</span>')
         fraicheur = (f'<div class="sub">il y a {d["fraicheur"]} '
@@ -663,7 +671,7 @@ def tableau_html(liste):
 <td>{d['date_b'].strftime('%d/%m/%Y')}{fraicheur}</td>
 <td>{d['prix_a']:.2f} → {d['prix_b']:.2f}<div class="sub">{d['ecart_prix_pct']:+.2f}%</div></td>
 <td>{d['rsi_a']:.1f} → {d['rsi_b']:.1f}</td>
-<td><span class="badge {b_delta}">{d['delta_rsi']:+.1f}</span></td>
+<td><span class="badge {b_delta}">{d['delta_rsi']:+.1f}</span> {fort}</td>
 <td><span class="badge {retr_cls}">{retr:.1f}%</span></td>
 <td>{statut}</td>
 <td>{d['svg']}</td>
@@ -682,9 +690,7 @@ def generer_html(divergences, tickers, vues, erreurs, params, chemin, anciennes=
     baiss = [d for d in divergences if TYPES_META[d["type"]]["biais"] == "baissier"]
     recentes = [d for d in divergences
                 if d["fraicheur"] <= params["telegram"]["fraicheur_max_bougies"][d["vue"]]]
-    seuil_kpi = params["prioritaire"]["fraicheur_confirmees"]
-    a_surveiller_kpi = [d for d in divergences
-                        if (not d["confirmee"]) or d["fraicheur"] <= seuil_kpi[d["vue"]]]
+    a_surveiller_kpi = [d for d in divergences if not d["confirmee"]]
 
     html = [f"""<!DOCTYPE html>
 <html lang="fr">
@@ -706,7 +712,7 @@ Filtres anti-bruit : écart intermédiaire &le; {params['retracement_max_pct']}%
 <div class="kpi"><div class="kl">Divergences</div><div class="kv">{len(divergences)}</div></div>
 <div class="kpi hauss"><div class="kl">Haussières</div><div class="kv green">{len(hauss)}</div></div>
 <div class="kpi baiss"><div class="kl">Baissières</div><div class="kv red">{len(baiss)}</div></div>
-<div class="kpi prio-kpi"><div class="kl">À surveiller</div><div class="kv">{len(a_surveiller_kpi)}</div></div>
+<div class="kpi prio-kpi"><div class="kl">En formation</div><div class="kv">{len(a_surveiller_kpi)}</div></div>
 <div class="kpi"><div class="kl">Récentes (alertées)</div><div class="kv">{len(recentes)}</div></div>
 <div class="kpi"><div class="kl">Anciennes écartées</div><div class="kv">{anciennes}</div></div>
 <div class="kpi"><div class="kl">Tickers en échec</div><div class="kv">{len(erreurs)}</div></div>
@@ -719,20 +725,22 @@ Filtres anti-bruit : écart intermédiaire &le; {params['retracement_max_pct']}%
         html.append(f'<div>{m["emoji"]} <b>{m["label"]}</b> — {m["explication"]}</div>')
     html.append('</div>')
 
-    # ── Section prioritaire : ce qui se joue maintenant ──
-    seuil_conf = params["prioritaire"]["fraicheur_confirmees"]
-    a_surveiller = [d for d in divergences
-                    if (not d["confirmee"]) or d["fraicheur"] <= seuil_conf[d["vue"]]]
-    html.append(f'<div class="section-title">À surveiller maintenant '
-                f'— {len(a_surveiller)} divergence(s)</div>')
-    if a_surveiller:
+    # ── Section prioritaire : uniquement ce qui est en train de se former,
+    #    les divergences RSI les plus franches d'abord. ──
+    seuil_fort = params["prioritaire"]["rsi_delta_fort"]
+    en_formation = [d for d in divergences if not d["confirmee"]]
+    fortes = [d for d in en_formation if abs(d["delta_rsi"]) >= seuil_fort]
+    html.append(f'<div class="section-title">En formation '
+                f'— {len(en_formation)} divergence(s), dont {len(fortes)} '
+                f'à RSI marqué (&ge; {seuil_fort:.0f} points)</div>')
+    if en_formation:
         html.append('<div class="prio">')
-        html.append(tableau_html(sorted(a_surveiller,
-                                        key=lambda x: (x["fraicheur"], x["ticker"]))))
+        html.append(tableau_html(
+            sorted(en_formation, key=lambda x: (-abs(x["delta_rsi"]), x["fraicheur"])),
+            seuil_fort))
         html.append('</div>')
     else:
-        html.append('<div class="vide">Rien en formation, et aucune divergence '
-                    'confirmée assez récente.</div>')
+        html.append('<div class="vide">Aucune divergence en cours de formation.</div>')
 
     for vue in vues:
         du_vue = [d for d in divergences if d["vue"] == vue]

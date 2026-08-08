@@ -72,6 +72,9 @@
         "W": 13
       }
     },
-    "verifier_ligne_rsi": false
+    "verifier_ligne_rsi": false,
+    "prioritaire": {
+      "rsi_delta_fort": 10.0
+    }
   }
 }

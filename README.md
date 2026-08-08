@@ -216,20 +216,22 @@ dans le KPI « Anciennes écartées ».
 
 Pour tout voir malgré tout : `--historique`.
 
-## « À surveiller maintenant » — la section du haut
+## « En formation » — la section du haut
 
-Le rapport s'ouvre sur une section encadrée qui ne retient que ce qui se joue
-en ce moment :
+Le rapport s'ouvre sur une section encadrée qui ne contient **que les
+divergences en cours de formation** : celles dont le dernier pivot n'a pas
+encore ses bougies de confirmation. C'est là que se trouvent les figures encore
+exploitables.
 
-- toutes les divergences **en formation**, quelle que soit leur date ;
-- les divergences **confirmées** de moins de **5 jours** en vue D, **1 semaine**
-  en vue W.
+Elles sont classées par **force de la divergence RSI**, du plus grand écart au
+plus petit, et celles dont l'écart atteint **10 points** portent un marqueur
+`★ forte`. Le titre de la section indique combien il y en a.
 
-Une divergence confirmée depuis trois semaines a déjà donné ce qu'elle avait à
-donner : elle reste consultable dans les tableaux par vue, en dessous, mais elle
-n'encombre plus la tête du rapport.
+Une divergence déjà confirmée a été validée par le marché : elle reste
+consultable dans les tableaux par vue, en dessous, mais n'encombre plus la tête
+du rapport.
 
-Seuils réglables : `prioritaire.fraicheur_confirmees`.
+Seuil réglable : `prioritaire.rsi_delta_fort`.
 
 ## Confirmée vs en formation
 
@@ -268,8 +270,8 @@ si tu passes `confirmees_seulement` à `false`.
   "fraicheur_max_bougies": { "D": 40, "W": 13 }   ← au-delà, non affiché
 },
 "prioritaire": {
-  "fraicheur_confirmees": { "D": 5, "W": 1 }      ← âge max d'une confirmée
-},                                                ←   dans la section du haut
+  "rsi_delta_fort": 10.0                          ← seuil du marqueur ★ forte
+},
 "verifier_ligne": true,                ← rejette les droites cassées
 "max_par_type": 3,                     ← nb max de divergences par type et par vue
 "telegram": {
