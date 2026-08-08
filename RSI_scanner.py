@@ -178,11 +178,20 @@ def telecharger(ticker, periode):
 
 
 def en_hebdomadaire(df):
-    """Agrège les bougies journalières en bougies hebdomadaires (clôture vendredi)."""
+    """
+    Agrège les bougies journalières en bougies hebdomadaires, du lundi au
+    vendredi, chaque bougie portant la date de son LUNDI d'ouverture.
+
+    Dater la semaine à sa clôture du vendredi donnait des bougies correctes mais
+    des dates trompeuses : on lit alors 31/07 pour une semaine qui commence le
+    27/07. Les plateformes datent la bougie hebdomadaire à son ouverture.
+    """
     regles = {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
     if "Volume" in df.columns:
         regles["Volume"] = "sum"
-    hebdo = df.resample("W-FRI").agg(regles).dropna(subset=["High", "Low", "Close"])
+    lundi = df.index - pd.to_timedelta(df.index.weekday, unit="D")
+    hebdo = df.groupby(lundi).agg(regles).dropna(subset=["High", "Low", "Close"])
+    hebdo.index.name = df.index.name
     return hebdo
 
 
@@ -576,6 +585,8 @@ def rendre_svg(df, rsi_serie, d, largeur=440, h_prix=104, h_rsi=58, h_dates=15):
 <circle cx="{x(d['idx_a']):.1f}" cy="{y_rsi(d['rsi_a']):.1f}" r="2.6" fill="{couleur}"/>
 <circle cx="{x(d['idx_b']):.1f}" cy="{y_rsi(d['rsi_b']):.1f}" r="2.6" fill="{couleur}"/>
 {"".join(reperes)}
+<rect x="4" y="4" width="17" height="13" rx="3" fill="#ece8e0" fill-opacity="0.92"/>
+<text x="12.5" y="13.5" font-size="9" font-weight="700" fill="#6b6459" text-anchor="middle">{d['vue']}</text>
 </svg>"""
 
 

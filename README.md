@@ -171,9 +171,13 @@ signal d'un simple mouvement du marché.
    côté d'une droite en pente, ce qui écartait les divergences les plus
    franches.
 
-La vue W est reconstruite en agrégeant les bougies journalières (clôture
-vendredi) : un seul téléchargement par ticker sert les deux vues, ce qui
-garantit leur cohérence et divise par deux les requêtes.
+La vue W est reconstruite en agrégeant les bougies journalières du lundi au
+vendredi, chaque bougie portant la date de son **lundi d'ouverture** — comme sur
+les plateformes de graphiques. Un seul téléchargement par ticker sert les deux
+vues, ce qui garantit leur cohérence et divise par deux les requêtes.
+
+Chaque vignette porte en haut à gauche un badge **D** ou **W** rappelant sa
+timeframe.
 
 ---
 
