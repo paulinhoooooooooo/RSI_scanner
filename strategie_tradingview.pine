@@ -24,23 +24,27 @@ strategy("Divergences RSI — stop suiveur ATR",
      commission_value        = 0.05,
      slippage                = 2,
      process_orders_on_close = true,
-     calc_on_every_tick      = false)
+     calc_on_every_tick      = false,
+     max_bars_back           = 500)
 
 // ─── Paramètres ────────────────────────────────────────────────────────────
 
 gDet = "Détection"
+preset = input.string("Auto", "Préréglage",
+     options = ["Auto", "Journalier", "Hebdomadaire", "Manuel"], group = gDet,
+     tooltip = "Auto adapte les pivots et la portée à l'unité de temps du graphique. Une bougie hebdomadaire couvre cinq séances : les réglages journaliers y sont beaucoup trop larges et ne trouvent presque rien. Manuel applique les valeurs saisies ci-dessous.")
 rsiLen     = input.int(14, "Période du RSI",           minval = 2, group = gDet)
-pivotLeft  = input.int(5,  "Pivot — bougies à gauche", minval = 1, group = gDet)
-pivotRight = input.int(5,  "Pivot — bougies à droite", minval = 1, group = gDet,
+pivotLeft  = input.int(5,  "Pivot — bougies à gauche (manuel)", minval = 1, group = gDet)
+pivotRight = input.int(5,  "Pivot — bougies à droite (manuel)", minval = 1, group = gDet,
      tooltip = "Sert à la confirmation. En mode « dès la formation », l'entrée ne les attend pas.")
 modeEntree = input.string("Dès la formation", "Moment de l'entrée",
      options = ["Dès la formation", "Après confirmation"], group = gDet,
      tooltip = "Dès la formation : réactif, mais certains pivots seront invalidés ensuite. Après confirmation : plus fiable, entrée retardée de « bougies à droite ».")
 
 gApp = "Appariement des pivots"
-ecartMin      = input.int(5,   "Portée minimale (bougies)", minval = 2, group = gApp)
-ecartMax      = input.int(160, "Portée maximale (bougies)", minval = 5, group = gApp,
-     tooltip = "160 en vue journalière laisse passer les bases de six mois.")
+ecartMin      = input.int(5,   "Portée minimale (manuel)", minval = 2, group = gApp)
+ecartMax      = input.int(160, "Portée maximale (manuel)", minval = 5, group = gApp,
+     tooltip = "160 bougies en vue journalière laissent passer les bases de six mois ; 60 suffisent en hebdomadaire, où chaque bougie vaut cinq séances.")
 memoirePivots = input.int(12,  "Pivots gardés en mémoire",  minval = 2, maxval = 30, group = gApp,
      tooltip = "Limite la profondeur d'appariement. Trop bas, les divergences longues sont perdues : le premier pivot est sorti de la mémoire avant l'apparition du second.")
 
@@ -65,6 +69,20 @@ margeStop = input.float(0.5, "Stop initial sous le pivot (× ATR)", minval = 0, 
 
 tracerLignes = input.bool(true, "Tracer les divergences", group = "Affichage")
 
+// ─── Réglages effectifs selon l'unité de temps ─────────────────────────────
+// Une bougie hebdomadaire couvre cinq séances : garder les réglages
+// journaliers sur un graphique W revient à chercher des pivots sur 25 séances
+// et des divergences de trois ans, et le scan ne trouve plus rien.
+
+estHebdo   = timeframe.isweekly or timeframe.ismonthly
+modeHebdo  = preset == "Hebdomadaire" or (preset == "Auto" and estHebdo)
+manuel     = preset == "Manuel"
+
+pivotLeftEff  = manuel ? pivotLeft  : (modeHebdo ? 3 : 5)
+pivotRightEff = manuel ? pivotRight : (modeHebdo ? 3 : 5)
+ecartMinEff   = manuel ? ecartMin   : (modeHebdo ? 4 : 5)
+ecartMaxEff   = manuel ? ecartMax   : (modeHebdo ? 60 : 160)
+
 // ─── Indicateurs ───────────────────────────────────────────────────────────
 
 rsi    = ta.rsi(close, rsiLen)
@@ -86,7 +104,7 @@ var array<float> hautPrix = array.new<float>()
 empiler(array<int> bars, array<float> rsis, array<float> prix,
          int b, float r, float p) =>
     int taille = array.size(bars)
-    bool remplace = taille > 0 and (b - array.get(bars, taille - 1)) < pivotLeft
+    bool remplace = taille > 0 and (b - array.get(bars, taille - 1)) < pivotLeftEff
     if remplace
         array.set(bars, taille - 1, b)
         array.set(rsis, taille - 1, r)
@@ -106,16 +124,16 @@ empiler(array<int> bars, array<float> rsis, array<float> prix,
 confirme = modeEntree == "Après confirmation"
 
 // Mode confirmation : ta.pivotlow ne répond que `pivotRight` bougies plus tard.
-plConf = ta.pivotlow(rsi, pivotLeft, pivotRight)
-phConf = ta.pivothigh(rsi, pivotLeft, pivotRight)
+plConf = ta.pivotlow(rsi, pivotLeftEff, pivotRightEff)
+phConf = ta.pivothigh(rsi, pivotLeftEff, pivotRightEff)
 
 // Mode formation : le RSI du jour passe sous les `pivotLeft` précédents.
-plNow = rsi < ta.lowest(rsi, pivotLeft)[1]
-phNow = rsi > ta.highest(rsi, pivotLeft)[1]
+plNow = rsi < ta.lowest(rsi, pivotLeftEff)[1]
+phNow = rsi > ta.highest(rsi, pivotLeftEff)[1]
 
 nouveauBas  = confirme ? not na(plConf) : plNow
 nouveauHaut = confirme ? not na(phConf) : phNow
-decalage    = confirme ? pivotRight : 0
+decalage    = confirme ? pivotRightEff : 0
 
 if nouveauBas
     empiler(basBar, basRsi, basPrix, bar_index - decalage, rsi[decalage], low[decalage])
@@ -171,7 +189,7 @@ chercher(array<int> bars, array<float> rsis, array<float> prix, bool creux, bool
                 float rsiA  = array.get(rsis,  i)
                 float prixA = array.get(prix,  i)
                 int   span  = barB - barA
-                if span >= ecartMin and span <= ecartMax and prixA > 0
+                if span >= ecartMinEff and span <= ecartMaxEff and prixA > 0
                     float ecartPrix = (prixB - prixA) / prixA
                     float dRsi      = rsiB - rsiA
                     // Le prix ne doit jamais partir dans le même sens que le
@@ -254,3 +272,12 @@ plotshape(divHaussiere, "Divergence haussière", shape.triangleup,
      location.belowbar, color = #0f6e56, size = size.tiny)
 plotshape(divBaissiere, "Divergence baissière", shape.triangledown,
      location.abovebar, color = #a32d2d, size = size.tiny)
+
+// Rappel des réglages réellement appliqués, pour lever tout doute.
+var table infos = table.new(position.top_right, 1, 1, border_width = 0)
+if barstate.islast
+    table.cell(infos, 0, 0,
+         (modeHebdo ? "Réglages hebdo" : manuel ? "Réglages manuels" : "Réglages journaliers")
+         + "  ·  pivots " + str.tostring(pivotLeftEff) + "/" + str.tostring(pivotRightEff)
+         + "  ·  portée " + str.tostring(ecartMinEff) + "-" + str.tostring(ecartMaxEff),
+         text_size = size.small, text_color = #6b6459, bgcolor = color.new(#ece8e0, 20))
