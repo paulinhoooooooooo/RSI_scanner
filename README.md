@@ -381,6 +381,26 @@ défaut : la stratégie et le scanner voient donc les mêmes figures.
 perdues — le premier pivot sort de la mémoire avant l'apparition du second. 12
 couvre confortablement une base de six mois.
 
+## Indicateur VWAP & théorie des enchères
+
+`indicateur_vwap_amt.pine` est un indicateur TradingView distinct, sans rapport
+avec les divergences RSI. Il lit le marché « par la valeur » :
+
+- **VWAP et bandes d'écart-type** — la valeur statistique de la période. La
+  bande ±1σ contient environ 68 % de l'activité, ce qui recoupe la définition
+  de la zone de valeur en théorie des enchères (70 %).
+- **Profil de volume de la période précédente** — POC, VAH, VAL, la vraie
+  référence de l'Auction Market Theory. Le marché ouvre chaque période en
+  acceptant ou en rejetant la valeur de la veille.
+- **Régime affiché en clair** — équilibre (les extrêmes se faden) ou
+  déséquilibre (la cassure se suit). Les deux régimes appellent des
+  comportements opposés ; les confondre est la faute la plus coûteuse.
+- **Signaux** — rejet d'un extrême à ±2σ, et acceptation hors de la valeur
+  précédente.
+
+Sans volumes réels, le VWAP et le profil n'ont pas de sens : le tableau le
+signale explicitement.
+
 ## Limites à connaître
 
 - Les données viennent de **Yahoo Finance** : un ticker mal orthographié ne

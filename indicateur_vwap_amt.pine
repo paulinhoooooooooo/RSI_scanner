@@ -1,0 +1,294 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════
+//  VWAP & Auction Market Theory
+//
+//  Réunit les deux lectures du marché « par la valeur » :
+//
+//  1. Le VWAP et ses bandes d'écart-type. Le VWAP est le prix moyen pondéré
+//     par les volumes : la valeur statistique de la période. La bande ±1σ
+//     contient environ 68 % de l'activité, ce qui recoupe de près la
+//     définition de la zone de valeur en théorie des enchères (70 %).
+//
+//  2. Le profil de volume de la période PRÉCÉDENTE : POC, VAH, VAL. C'est la
+//     vraie référence de l'Auction Market Theory — le marché ouvre chaque
+//     période en acceptant ou en rejetant la valeur établie la veille.
+//
+//  La théorie des enchères tient en une idée : le marché alterne entre
+//  ÉQUILIBRE (rotation autour de la valeur, les extrêmes sont rejetés) et
+//  DÉSÉQUILIBRE (la valeur migre, le prix est accepté hors de la zone). Les
+//  deux régimes appellent des comportements opposés — fader les extrêmes dans
+//  le premier, suivre la cassure dans le second. Confondre les deux est la
+//  faute la plus coûteuse. L'indicateur affiche donc le régime en clair.
+//
+//  ATTENTION : sans volumes réels, le VWAP et le profil n'ont pas de sens.
+//  C'est le cas de la plupart des paires de devises et de certains indices.
+//  Le tableau le signale.
+// ═══════════════════════════════════════════════════════════════════════════
+
+indicator("VWAP & Auction Market Theory", shorttitle = "VWAP AMT",
+     overlay         = true,
+     max_lines_count = 500,
+     max_bars_back   = 500)
+
+// ─── Paramètres ────────────────────────────────────────────────────────────
+
+gAnc = "Ancrage"
+ancrage = input.string("Séance", "Période de référence",
+     options = ["Séance", "Semaine", "Mois"], group = gAnc,
+     tooltip = "Le VWAP et le profil de volume se réinitialisent à chaque nouvelle période. Séance pour l'intraday, Semaine ou Mois pour le swing.")
+srcVwap = input.source(hlc3, "Source du VWAP", group = gAnc)
+
+gBnd = "Bandes d'écart-type"
+montrerB1 = input.bool(true,  "±1σ — zone de valeur", group = gBnd)
+montrerB2 = input.bool(true,  "±2σ — extrêmes",       group = gBnd)
+montrerB3 = input.bool(false, "±3σ — excès",          group = gBnd)
+
+gPro = "Profil de volume de la période précédente"
+montrerProfil = input.bool(true, "Afficher POC / VAH / VAL", group = gPro)
+nbNiveaux     = input.int(24,   "Finesse du profil (niveaux)", minval = 8, maxval = 50, group = gPro,
+     tooltip = "Nombre de tranches de prix. Plus il est élevé, plus le POC est précis, mais plus le calcul est lourd.")
+pctValeur     = input.float(70, "Zone de valeur (%)", minval = 50, maxval = 95, step = 5, group = gPro,
+     tooltip = "Part du volume contenue dans la zone de valeur. 70 % est la convention.")
+
+gIB = "Balance initiale"
+montrerIB = input.bool(false, "Afficher la balance initiale", group = gIB,
+     tooltip = "Étendue des premières bougies de la période. En théorie des enchères, sa cassure signale que les intervenants de long terme prennent la main.")
+barresIB  = input.int(6, "Nombre de bougies", minval = 1, maxval = 60, group = gIB)
+
+gSig = "Signaux"
+signalRejet       = input.bool(true, "Rejet d'un extrême (±2σ)", group = gSig,
+     tooltip = "Le prix sort de la bande 2σ puis y revient en clôture : l'enchère a exploré et a été refusée. Signal de rotation vers le VWAP, valable en régime d'équilibre.")
+signalAcceptation = input.bool(true, "Acceptation hors valeur", group = gSig,
+     tooltip = "Le prix clôture plusieurs fois hors de la zone de valeur précédente : la valeur migre. Signal de continuation, valable en régime de déséquilibre.")
+barresAcceptation = input.int(2, "  Clôtures requises", minval = 1, maxval = 10, group = gSig)
+
+montrerTableau = input.bool(true, "Tableau de lecture", group = "Affichage")
+
+// ─── Nouvelle période ──────────────────────────────────────────────────────
+
+resAncre = ancrage == "Séance" ? "D" : ancrage == "Semaine" ? "W" : "M"
+tAncre   = time(resAncre)
+nouvellePeriode = na(tAncre[1]) or tAncre != tAncre[1]
+
+// ─── VWAP et bandes ────────────────────────────────────────────────────────
+
+[vwapVal, b1Up, b1Dn] = ta.vwap(srcVwap, nouvellePeriode, 1.0)
+[_v2,     b2Up, b2Dn] = ta.vwap(srcVwap, nouvellePeriode, 2.0)
+[_v3,     b3Up, b3Dn] = ta.vwap(srcVwap, nouvellePeriode, 3.0)
+
+pVwap = plot(vwapVal, "VWAP", color = #185fa5, linewidth = 2)
+p1Up  = plot(montrerB1 ? b1Up : na, "+1σ", color = color.new(#185fa5, 40))
+p1Dn  = plot(montrerB1 ? b1Dn : na, "−1σ", color = color.new(#185fa5, 40))
+plot(montrerB2 ? b2Up : na, "+2σ", color = color.new(#ba7517, 30))
+plot(montrerB2 ? b2Dn : na, "−2σ", color = color.new(#ba7517, 30))
+plot(montrerB3 ? b3Up : na, "+3σ", color = color.new(#a32d2d, 40))
+plot(montrerB3 ? b3Dn : na, "−3σ", color = color.new(#a32d2d, 40))
+fill(p1Up, p1Dn, color = color.new(#185fa5, 93), title = "Zone de valeur ±1σ")
+
+// ─── Profil de volume ──────────────────────────────────────────────────────
+// On mémorise les bougies de la période, puis on calcule le profil à sa
+// clôture. Calculer un profil « en développement » à chaque bougie coûterait
+// bien plus cher pour une information qui ne se lit qu'une fois la période
+// terminée.
+
+var array<float> perHaut = array.new<float>()
+var array<float> perBas  = array.new<float>()
+var array<float> perVol  = array.new<float>()
+
+// Renvoie [POC, VAH, VAL] — le prix le plus échangé, et les bornes de la zone
+// contenant `pct` % du volume, étendue depuis le POC vers le voisin le plus
+// actif, comme le veut la construction classique.
+//
+// `actif` évite d'exécuter le calcul à chaque bougie : la fonction est appelée
+// en portée globale, seul son contenu est conditionnel.
+calculerProfil(array<float> hs, array<float> ls, array<float> vs,
+                int niveaux, float pct, bool actif) =>
+    float poc = na
+    float vah = na
+    float val = na
+    int n = array.size(hs)
+    if actif and n > 2
+        float bas     = array.min(ls)
+        float haut    = array.max(hs)
+        float etendue = haut - bas
+        if etendue > 0
+            float pas = etendue / niveaux
+            array<float> seaux = array.new<float>(niveaux, 0.0)
+            // Le volume d'une bougie est réparti sur les tranches qu'elle couvre.
+            for i = 0 to n - 1
+                float bh = array.get(hs, i)
+                float bl = array.get(ls, i)
+                float bv = array.get(vs, i)
+                int iDeb = math.max(0, math.min(niveaux - 1, int((bl - bas) / pas)))
+                int iFin = math.max(0, math.min(niveaux - 1, int((bh - bas) / pas)))
+                float part = bv / (iFin - iDeb + 1)
+                for k = iDeb to iFin
+                    array.set(seaux, k, array.get(seaux, k) + part)
+            // POC : la tranche la plus échangée.
+            float volMax = array.max(seaux)
+            int   iPoc   = array.indexof(seaux, volMax)
+            float total  = array.sum(seaux)
+            float cible  = total * pct / 100.0
+            float cumul  = volMax
+            int   iBas   = iPoc
+            int   iHaut  = iPoc
+            // Extension alternée vers le voisin le plus actif.
+            while cumul < cible and (iBas > 0 or iHaut < niveaux - 1)
+                float vDessous = iBas  > 0           ? array.get(seaux, iBas - 1)  : -1.0
+                float vDessus  = iHaut < niveaux - 1 ? array.get(seaux, iHaut + 1) : -1.0
+                if vDessus >= vDessous
+                    iHaut += 1
+                    cumul += vDessus
+                else
+                    iBas -= 1
+                    cumul += vDessous
+            poc := bas + (iPoc + 0.5) * pas
+            vah := bas + (iHaut + 1) * pas
+            val := bas + iBas * pas
+    [poc, vah, val]
+
+var float pocPrec = na
+var float vahPrec = na
+var float valPrec = na
+
+[pNouv, hNouv, bNouv] = calculerProfil(perHaut, perBas, perVol,
+                                        nbNiveaux, pctValeur, nouvellePeriode)
+
+if nouvellePeriode
+    if not na(pNouv)
+        pocPrec := pNouv
+        vahPrec := hNouv
+        valPrec := bNouv
+    array.clear(perHaut)
+    array.clear(perBas)
+    array.clear(perVol)
+
+array.push(perHaut, high)
+array.push(perBas,  low)
+array.push(perVol,  nz(volume))
+
+// ─── Tracé de la valeur précédente ─────────────────────────────────────────
+
+var line lPoc = na
+var line lVah = na
+var line lVal = na
+
+if montrerProfil and nouvellePeriode and not na(pocPrec)
+    lPoc := line.new(bar_index, pocPrec, bar_index, pocPrec, color = #a32d2d, width = 2)
+    lVah := line.new(bar_index, vahPrec, bar_index, vahPrec, color = #3b6d11,
+         width = 1, style = line.style_dashed)
+    lVal := line.new(bar_index, valPrec, bar_index, valPrec, color = #3b6d11,
+         width = 1, style = line.style_dashed)
+
+if not na(lPoc)
+    line.set_xy2(lPoc, bar_index, pocPrec)
+    line.set_xy2(lVah, bar_index, vahPrec)
+    line.set_xy2(lVal, bar_index, valPrec)
+
+// ─── Balance initiale ──────────────────────────────────────────────────────
+
+var float ibHaut  = na
+var float ibBas   = na
+var int   nBarres = 0
+
+nBarres := nouvellePeriode ? 1 : nBarres + 1
+if nouvellePeriode
+    ibHaut := high
+    ibBas  := low
+else if nBarres <= barresIB
+    ibHaut := math.max(nz(ibHaut, high), high)
+    ibBas  := math.min(nz(ibBas, low), low)
+
+plot(montrerIB ? ibHaut : na, "IB haut", color = color.new(#7b3fa0, 25),
+     style = plot.style_stepline)
+plot(montrerIB ? ibBas : na,  "IB bas",  color = color.new(#7b3fa0, 25),
+     style = plot.style_stepline)
+
+// ─── Régime : équilibre ou déséquilibre ────────────────────────────────────
+// Le régime se lit d'abord sur la position du prix par rapport à la zone de
+// valeur statistique (±1σ). Hors de cette zone, l'enchère ne tourne plus
+// autour de sa valeur : elle en cherche une nouvelle.
+
+enValeur   = close <= b1Up and close >= b1Dn
+desequHaut = close > b1Up
+
+regime = enValeur ? "Équilibre" : desequHaut ? "Déséquilibre haussier" : "Déséquilibre baissier"
+
+// ─── Type d'ouverture ──────────────────────────────────────────────────────
+// En théorie des enchères, l'ouverture par rapport à la valeur de la veille
+// conditionne la lecture de toute la période.
+
+var string typeOuverture = "—"
+if nouvellePeriode
+    typeOuverture := na(vahPrec) ? "—" :
+         open > vahPrec ? "Au-dessus de la valeur" :
+         open < valPrec ? "Sous la valeur" : "Dans la valeur"
+
+// ─── Signaux ───────────────────────────────────────────────────────────────
+
+// Rejet d'un extrême : le prix est allé chercher au-delà de 2σ et n'y est pas
+// resté. L'enchère a exploré, les intervenants ont refusé. Rotation attendue
+// vers le VWAP — lecture valable en régime d'équilibre, pas en tendance.
+rejetHaut = signalRejet and high > b2Up and close < b2Up and close < open
+rejetBas  = signalRejet and low  < b2Dn and close > b2Dn and close > open
+
+// Acceptation hors valeur : plusieurs clôtures consécutives au-delà de la zone
+// de valeur précédente. Le marché ne rejette plus, il accepte : la valeur
+// migre, c'est une continuation.
+//
+// ta.barssince renvoie le nombre de bougies écoulées depuis la dernière
+// clôture rentrée dans la valeur : il égale donc le nombre de clôtures
+// consécutives au-dehors.
+clotAuDessus  = not na(vahPrec) and close > vahPrec
+clotEnDessous = not na(valPrec) and close < valPrec
+compteurHaut  = ta.barssince(not clotAuDessus)
+compteurBas   = ta.barssince(not clotEnDessous)
+
+acceptHaut = signalAcceptation and clotAuDessus  and compteurHaut == barresAcceptation
+acceptBas  = signalAcceptation and clotEnDessous and compteurBas  == barresAcceptation
+
+plotshape(rejetHaut,  "Rejet extrême haut", shape.triangledown, location.abovebar,
+     color = #a32d2d, size = size.tiny)
+plotshape(rejetBas,   "Rejet extrême bas",  shape.triangleup,   location.belowbar,
+     color = #0f6e56, size = size.tiny)
+plotshape(acceptHaut, "Acceptation au-dessus", shape.labelup, location.belowbar,
+     color = color.new(#3b6d11, 20), text = "Accept.", textcolor = color.white, size = size.tiny)
+plotshape(acceptBas,  "Acceptation en-dessous", shape.labeldown, location.abovebar,
+     color = color.new(#a32d2d, 20), text = "Accept.", textcolor = color.white, size = size.tiny)
+
+alertcondition(rejetHaut,  "Rejet de l'extrême haut",  "Le prix a dépassé +2σ puis y est revenu — rotation possible vers le VWAP")
+alertcondition(rejetBas,   "Rejet de l'extrême bas",   "Le prix a dépassé −2σ puis y est revenu — rotation possible vers le VWAP")
+alertcondition(acceptHaut, "Acceptation au-dessus de la valeur", "Clôtures acceptées au-dessus de la VAH précédente — la valeur migre vers le haut")
+alertcondition(acceptBas,  "Acceptation sous la valeur",         "Clôtures acceptées sous la VAL précédente — la valeur migre vers le bas")
+
+// ─── Tableau de lecture ────────────────────────────────────────────────────
+
+var table tbl = table.new(position.top_right, 2, 8,
+     border_width = 1, border_color = color.new(color.gray, 70))
+
+ligne(int r, string cle, string valeur, color coul) =>
+    table.cell(tbl, 0, r, cle, text_size = size.small, text_halign = text.align_left,
+         text_color = #8a8378, bgcolor = color.new(#ece8e0, 15))
+    table.cell(tbl, 1, r, valeur, text_size = size.small, text_halign = text.align_right,
+         text_color = coul, bgcolor = color.new(#ece8e0, 15))
+
+if montrerTableau and barstate.islast
+    bool sansVolume = na(volume) or ta.cum(nz(volume)) == 0
+    color couleurRegime = enValeur ? #185fa5 : desequHaut ? #3b6d11 : #a32d2d
+    float ecartVwap = (close - vwapVal) / vwapVal * 100
+
+    ligne(0, "Ancrage", ancrage, #1a1a1a)
+    ligne(1, "Régime", regime, couleurRegime)
+    ligne(2, "VWAP", str.tostring(vwapVal, format.mintick)
+         + "  (" + str.tostring(ecartVwap, "+0.00") + " %)", #185fa5)
+    ligne(3, "Zone de valeur ±1σ",
+         str.tostring(b1Dn, format.mintick) + " – " + str.tostring(b1Up, format.mintick), #1a1a1a)
+    ligne(4, "Valeur précédente (VAL/POC/VAH)",
+         na(pocPrec) ? "en construction"
+         : str.tostring(valPrec, format.mintick) + " / " + str.tostring(pocPrec, format.mintick)
+           + " / " + str.tostring(vahPrec, format.mintick), #a32d2d)
+    ligne(5, "Ouverture", typeOuverture, #1a1a1a)
+    ligne(6, "Lecture",
+         enValeur ? "Fader les extrêmes" : "Suivre le déséquilibre", couleurRegime)
+    ligne(7, "Volumes", sansVolume ? "ABSENTS — profil invalide" : "présents",
+         sansVolume ? #a32d2d : #3b6d11)
