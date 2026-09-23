@@ -118,3 +118,62 @@ RIO
 # --- Indices & ETF (2) ---
 IWM
 ^FCHI
+
+
+# ═══════════════════════════════════════════════════════════
+#  COMPLÉMENT — 30 valeurs CYCLIQUES
+#  Sensibles au cycle économique : elles amplifient les
+#  retournements, donc les divergences y sont plus marquées.
+# ═══════════════════════════════════════════════════════════
+
+# --- Automobile (4) ---
+F
+GM
+STLA
+VOW3.DE
+
+# --- Transport aérien (3) ---
+DAL
+UAL
+AF.PA
+
+# --- Voyage, hôtellerie & loisirs (4) ---
+CCL
+RCL
+BKNG
+MAR
+
+# --- Construction & habitat (3) ---
+DHI
+LEN
+SGO.PA
+
+# --- Chimie (3) ---
+DOW
+LYB
+BAS.DE
+
+# --- Acier, aluminium & métaux (4) ---
+NUE
+FCX
+MT
+AA
+
+# --- Machines & équipement lourd (3) ---
+DE
+CMI
+URI
+
+# --- Équipement semi-conducteurs (2) ---
+AMAT
+LRCX
+
+# --- Logistique (1) ---
+FDX
+
+# --- Distribution discrétionnaire (2) ---
+TGT
+LOW
+
+# --- Services pétroliers (1) ---
+SLB

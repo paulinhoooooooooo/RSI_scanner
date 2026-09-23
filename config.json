@@ -58,7 +58,7 @@
         "D": 10,
         "W": 4
       },
-      "confirmees_seulement": true
+      "confirmees_seulement": false
     },
     "retracement_max_pct": 45.0,
     "zone_rsi": {

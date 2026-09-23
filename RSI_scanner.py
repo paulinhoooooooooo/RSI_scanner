@@ -83,7 +83,7 @@ DEFAUTS = {
     "telegram": {
         "actif": True,
         "fraicheur_max_bougies": {"D": 10, "W": 4},
-        "confirmees_seulement": True,
+        "confirmees_seulement": False,
     },
 }
 
@@ -214,14 +214,19 @@ def detecter_pivots(valeurs, gauche, droite, sens, autoriser_provisoire=True):
 
     Un pivot bas à l'indice i est plus bas que les `gauche` bougies précédentes
     et pas plus haut que les `droite` suivantes. Un pivot dont la fenêtre droite
-    est incomplète (fin de série) est marqué `confirme=False` : il est réel
-    aujourd'hui mais peut être invalidé par les bougies à venir.
+    est incomplète est marqué `confirme=False` : il est réel aujourd'hui mais
+    peut être invalidé par les bougies à venir.
+
+    La toute dernière bougie est éligible, validée sur sa seule fenêtre gauche.
+    L'exclure revenait à ne rien voir avant la séance suivante, et à ne pouvoir
+    rien confirmer avant `droite` séances de plus — une semaine de retard sur un
+    signal qui se joue au moment où il se forme.
     """
     n = len(valeurs)
     pivots = []
     for i in range(gauche, n):
         dispo = min(droite, n - 1 - i)
-        if dispo < 1 or (not autoriser_provisoire and dispo < droite):
+        if not autoriser_provisoire and dispo < droite:
             continue
         v = valeurs[i]
         if np.isnan(v):
@@ -234,12 +239,12 @@ def detecter_pivots(valeurs, gauche, droite, sens, autoriser_provisoire=True):
         fen_d = valeurs[i + 1:i + 1 + dispo]
         fen_g = fen_g[~np.isnan(fen_g)]
         fen_d = fen_d[~np.isnan(fen_d)]
-        if fen_g.size == 0 or fen_d.size == 0:
+        if fen_g.size == 0:
             continue
         if sens == "bas":
-            ok = np.all(v < fen_g) and np.all(v <= fen_d)
+            ok = np.all(v < fen_g) and (fen_d.size == 0 or np.all(v <= fen_d))
         else:
-            ok = np.all(v > fen_g) and np.all(v >= fen_d)
+            ok = np.all(v > fen_g) and (fen_d.size == 0 or np.all(v >= fen_d))
         if ok:
             pivots.append({"idx": i, "prix": float(v), "confirme": dispo >= droite})
     return pivots
@@ -637,6 +642,16 @@ def badge_duree(d):
             f'{d["span"]} {unite}</span>')
 
 
+def libelle_fraicheur(d):
+    """« dernière bougie », « hier », ou l'ancienneté en clair."""
+    n = d["fraicheur"]
+    if n == 0:
+        return "dernière bougie"
+    if n == 1:
+        return "hier" if d["vue"] == "D" else "semaine dernière"
+    return f'il y a {n} {VUES_META[d["vue"]]["unite"]}'
+
+
 def tableau_html(liste, seuil_fort=None):
     """
     Tableau complet pour une liste de divergences.
@@ -658,8 +673,7 @@ def tableau_html(liste, seuil_fort=None):
                 if seuil_fort and abs(d["delta_rsi"]) >= seuil_fort else "")
         statut = ('<span class="badge bg">confirmée</span>' if d["confirmee"]
                   else '<span class="badge bo">en formation</span>')
-        fraicheur = (f'<div class="sub">il y a {d["fraicheur"]} '
-                     f'{VUES_META[d["vue"]]["unite"]}</div>')
+        fraicheur = f'<div class="sub">{libelle_fraicheur(d)}</div>' 
         retr = d.get("retracement_pct", 0.0)
         retr_cls = "bn" if retr <= 15 else ("bi" if retr <= 30 else "bo")
         lignes.append(f"""<tr class="{cls}">
