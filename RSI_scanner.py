@@ -711,7 +711,8 @@ def tableau_html(liste, seuil_fort=None):
     return "".join(lignes)
 
 
-def generer_html(divergences, tickers, vues, erreurs, params, chemin, anciennes=0):
+def generer_html(divergences, tickers, vues, erreurs, params, chemin,
+                 anciennes=0, avec_confirmees=False, confirmees_ecartees=0):
     maintenant = datetime.now()
     zone = params.get("zone_rsi", {})
     zone_txt = ("" if not zone.get("actif", True) else
@@ -745,6 +746,7 @@ Filtres anti-bruit : écart intermédiaire &le; {params['retracement_max_pct']}%
 <div class="kpi baiss"><div class="kl">Baissières</div><div class="kv red">{len(baiss)}</div></div>
 <div class="kpi prio-kpi"><div class="kl">En formation</div><div class="kv">{len(a_surveiller_kpi)}</div></div>
 <div class="kpi"><div class="kl">Récentes (alertées)</div><div class="kv">{len(recentes)}</div></div>
+<div class="kpi"><div class="kl">Confirmées écartées</div><div class="kv">{confirmees_ecartees}</div></div>
 <div class="kpi"><div class="kl">Anciennes écartées</div><div class="kv">{anciennes}</div></div>
 <div class="kpi"><div class="kl">Tickers en échec</div><div class="kv">{len(erreurs)}</div></div>
 </div>"""]
@@ -756,32 +758,37 @@ Filtres anti-bruit : écart intermédiaire &le; {params['retracement_max_pct']}%
         html.append(f'<div>{m["emoji"]} <b>{m["label"]}</b> — {m["explication"]}</div>')
     html.append('</div>')
 
-    # ── Section prioritaire : uniquement ce qui est en train de se former,
-    #    les divergences RSI les plus franches d'abord. ──
+    # ── Section prioritaire : uniquement ce qui est en train de se former.
+    #    Inutile quand le rapport n'en contient déjà pas d'autres : on éviterait
+    #    juste d'afficher deux fois les mêmes lignes. ──
     seuil_fort = params["prioritaire"]["rsi_delta_fort"]
     en_formation = [d for d in divergences if not d["confirmee"]]
-    fortes = [d for d in en_formation if abs(d["delta_rsi"]) >= seuil_fort]
-    html.append(f'<div class="section-title">En formation '
-                f'— {len(en_formation)} divergence(s), dont {len(fortes)} '
-                f'à RSI marqué (&ge; {seuil_fort:.0f} points)</div>')
-    if en_formation:
-        html.append('<div class="prio">')
-        html.append(tableau_html(
-            sorted(en_formation, key=lambda x: (-abs(x["delta_rsi"]), x["fraicheur"])),
-            seuil_fort))
-        html.append('</div>')
-    else:
-        html.append('<div class="vide">Aucune divergence en cours de formation.</div>')
+    if avec_confirmees:
+        fortes = [d for d in en_formation if abs(d["delta_rsi"]) >= seuil_fort]
+        html.append(f'<div class="section-title">En formation '
+                    f'— {len(en_formation)} divergence(s), dont {len(fortes)} '
+                    f'à RSI marqué (&ge; {seuil_fort:.0f} points)</div>')
+        if en_formation:
+            html.append('<div class="prio">')
+            html.append(tableau_html(
+                sorted(en_formation, key=lambda x: (-abs(x["delta_rsi"]), x["fraicheur"])),
+                seuil_fort))
+            html.append('</div>')
+        else:
+            html.append('<div class="vide">Aucune divergence en cours de formation.</div>')
 
     for vue in vues:
         du_vue = [d for d in divergences if d["vue"] == vue]
-        html.append(f'<div class="section-title">{VUES_META[vue]["label"]} '
+        suffixe = "" if avec_confirmees else " — en formation"
+        html.append(f'<div class="section-title">{VUES_META[vue]["label"]}{suffixe} '
                     f'— {len(du_vue)} divergence(s)</div>')
         if not du_vue:
             html.append('<div class="vide">Aucune divergence détectée sur cette vue.</div>')
             continue
 
-        html.append(tableau_html(sorted(du_vue, key=lambda x: (x["fraicheur"], x["ticker"]))))
+        cle = ((lambda x: (x["fraicheur"], x["ticker"])) if avec_confirmees
+               else (lambda x: (-abs(x["delta_rsi"]), x["fraicheur"])))
+        html.append(tableau_html(sorted(du_vue, key=cle), seuil_fort))
 
     if erreurs:
         html.append('<div class="section-title">Tickers non analysés</div>')
@@ -887,6 +894,8 @@ def main():
                         help="Oublie les divergences déjà alertées et tout renvoyer")
     parser.add_argument("--toutes", action="store_true",
                         help="Alerte sur toutes les divergences, même anciennes")
+    parser.add_argument("--confirmees", action="store_true",
+                        help="Inclut aussi les divergences déjà confirmées")
     parser.add_argument("--historique", action="store_true",
                         help="Garde aussi les divergences anciennes dans le rapport")
     parser.add_argument("--sortie", default=None,
@@ -935,6 +944,15 @@ def main():
 
     # ── On écarte l'historique ancien : une divergence vieille de deux ans
     #    n'a plus d'intérêt opérationnel, elle a déjà joué ou échoué. ──
+    confirmees_ecartees = 0
+    if not args.confirmees:
+        avant_c = len(divergences)
+        divergences = [d for d in divergences if not d["confirmee"]]
+        confirmees_ecartees = avant_c - len(divergences)
+        if confirmees_ecartees:
+            print(f"\n({confirmees_ecartees} divergence(s) déjà confirmée(s) écartée(s) "
+                  f"— --confirmees pour les voir)")
+
     anciennes = 0
     if not args.historique:
         seuils = {v: max(params["rapport"]["fraicheur_max_bougies"][v],
@@ -951,7 +969,8 @@ def main():
     # ── Rapport ──
     horodatage = datetime.now().strftime("%Y%m%d_%H%M")
     chemin = Path(args.sortie) if args.sortie else RAPPORTS_DIR / f"divergences_{horodatage}.html"
-    generer_html(divergences, tickers, vues, erreurs, params, chemin, anciennes)
+    generer_html(divergences, tickers, vues, erreurs, params, chemin,
+                 anciennes, args.confirmees, confirmees_ecartees)
     print(f"\n📄 Rapport : {chemin}")
     if args.ouvrir:
         webbrowser.open(chemin.resolve().as_uri())

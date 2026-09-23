@@ -111,6 +111,7 @@ Un ticker par ligne, les lignes commençant par `#` sont ignorées.
 | `--no-telegram` | Génère le rapport sans envoyer d'alerte |
 | `--toutes` | Alerte aussi sur les divergences anciennes ou non confirmées |
 | `--reset-etat` | Oublie ce qui a déjà été alerté et renvoie tout |
+| `--confirmees` | Inclut aussi les divergences déjà confirmées |
 | `--historique` | Garde aussi les divergences anciennes dans le rapport |
 | `--sortie chemin.html` | Choisit le fichier du rapport |
 | `--ouvrir` | Ouvre le rapport à la fin du scan |
@@ -220,6 +221,15 @@ semaines** en vue W (`rapport.fraicheur_max_bougies`). Les autres sont comptées
 dans le KPI « Anciennes écartées ».
 
 Pour tout voir malgré tout : `--historique`.
+
+## Le rapport ne garde que les divergences en formation
+
+Une divergence **confirmée** a déjà eu ses cinq séances : le mouvement a eu lieu,
+l'occasion est passée. Par défaut le rapport ne retient donc que les
+divergences **non confirmées**, celles dont le second pivot vient de se former
+et sur lesquelles une position est encore possible.
+
+Un KPI compte les confirmées écartées, et `--confirmees` les réaffiche.
 
 ## « En formation » — la section du haut
 
