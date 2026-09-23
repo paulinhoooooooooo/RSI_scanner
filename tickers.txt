@@ -1,11 +1,17 @@
 # Liste des tickers à surveiller
 # Un ticker par ligne
-# Suffixe .PA pour Euronext Paris (ex: LVMH.PA)
-# Suffixe .MC pour Madrid, .DE pour Frankfurt, etc.
+# Suffixe .PA pour Euronext Paris (ex: MC.PA), .DE pour Francfort,
+# .MC pour Madrid, .MI pour Milan, .L pour Londres, .SW pour Zurich
 # Pas de suffixe pour les actions US (AAPL, TSLA...)
+# Préfixe ^ pour les indices (^GSPC, ^FCHI...)
 # Les lignes commençant par # sont ignorées
 
-# --- CAC 40 (exemples) ---
+
+# ═══════════════════════════════════════════════════════════
+#  LISTE D'ORIGINE
+# ═══════════════════════════════════════════════════════════
+
+# --- CAC 40 ---
 SAN.PA
 
 # --- US Tech ---
@@ -19,7 +25,7 @@ AMZN
 QQQ
 ^GSPC
 
-# --- Health ---
+# --- Santé ---
 JNJ
 AMGN
 LLY
@@ -31,5 +37,84 @@ HON
 IPN
 MRNA
 
-# --- GOLD ---
+# --- Or ---
 GOLD
+
+
+# ═══════════════════════════════════════════════════════════
+#  COMPLÉMENT — 50 valeurs, secteurs et zones diversifiés
+# ═══════════════════════════════════════════════════════════
+
+# --- Technologie & semi-conducteurs (8) ---
+AMD
+AVGO
+ASML
+TSM
+ORCL
+CRM
+ADBE
+QCOM
+
+# --- Finance & paiements (6) ---
+JPM
+GS
+V
+MA
+BNP.PA
+ALV.DE
+
+# --- Santé & équipement médical (5) ---
+PFE
+NVO
+TMO
+MDT
+ISRG
+
+# --- Énergie (4) ---
+XOM
+CVX
+TTE.PA
+SHEL
+
+# --- Industrie & aéronautique (5) ---
+CAT
+GE
+AIR.PA
+SIE.DE
+RTX
+
+# --- Consommation de base (5) ---
+KO
+PEP
+PG
+WMT
+COST
+
+# --- Consommation discrétionnaire & luxe (5) ---
+MCD
+NKE
+HD
+MC.PA
+RMS.PA
+
+# --- Communication & médias (3) ---
+NFLX
+DIS
+CMCSA
+
+# --- Immobilier coté (2) ---
+AMT
+PLD
+
+# --- Services aux collectivités (2) ---
+NEE
+IBE.MC
+
+# --- Matériaux & mines (3) ---
+LIN
+BHP
+RIO
+
+# --- Indices & ETF (2) ---
+IWM
+^FCHI
