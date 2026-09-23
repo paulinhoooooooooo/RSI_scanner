@@ -195,8 +195,13 @@ pratique.
 **Sens opposés obligatoire.** Le prix et le RSI ne doivent jamais aller dans la
 même direction — deux droites parallèles sont une tendance, pas une divergence.
 
-**Écart intermédiaire plafonné** (`retracement_max_pct`, 45 % par défaut).
+**Écart intermédiaire plafonné** (`retracement.max_atr`, 15 ATR par défaut).
 Au-delà, les deux pivots appartiennent à des régimes de prix sans rapport.
+
+Il est mesuré en **multiples d'ATR**, pas en pourcentage. Entre deux creux, une
+action bouge de 20 % et le bitcoin de 130 %, sans que la figure soit moins
+valable dans un cas que dans l'autre : un plafond en pourcentage écartait de
+fait tous les actifs très volatils. Le mode `pourcentage` reste disponible.
 
 Ce plafond est volontairement large. Un rebond marqué entre les deux creux est
 **normal** — c'est même la cassure de structure au cœur du motif recherché, qui
@@ -206,9 +211,11 @@ douteuses passent : le rapport affiche l'écart pour chaque ligne, colonne
 « Écart interm. », ce qui permet de juger sur pièce et de resserrer le seuil si
 tu le souhaites.
 
-**RSI en zone** (`zone_rsi`). Une divergence baissière suppose que le RSI a
-atteint le surachat (≥ 60 par défaut), une haussière qu'il a touché la survente
-(≤ 40). Une divergence entièrement contenue entre 45 et 55 ne dit rien.
+**RSI en zone** (`zone_rsi`). Une divergence ne dit quelque chose que si le
+marché était réellement étiré : le **premier** pivot doit avoir atteint un
+extrême — 30/70 en vue D, **25/75 en vue W**, où le RSI est bien plus lisse et
+atteint ces niveaux d'autant plus rarement. Le mode `les_deux_pivots` exige que
+la figure reste dans la zone extrême de bout en bout, ce qui est bien plus rare.
 
 Pour les désactiver : `retracement_max_pct` à `0`, et `zone_rsi.actif` à
 `false`.

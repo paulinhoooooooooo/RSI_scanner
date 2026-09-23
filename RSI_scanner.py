@@ -60,8 +60,21 @@ DEFAUTS = {
         "W": {"courte": 4, "moyenne": 12},
     },
     "rsi_delta_min": 6.0,
-    "retracement_max_pct": 45.0,
-    "zone_rsi": {"actif": True, "surachat": 60.0, "survente": 40.0},
+    # Écart maximal du prix entre les deux pivots. Mesuré en multiples d'ATR
+    # plutôt qu'en pourcentage : entre deux creux, une action bouge de 20 % et
+    # le bitcoin de 130 %, sans que la figure soit moins valable dans un cas
+    # que dans l'autre. Un plafond en pourcentage écarte de fait tous les
+    # actifs très volatils.
+    "retracement": {"mode": "atr", "max_atr": 15.0, "max_pct": 45.0},
+    # Une divergence ne dit quelque chose que si le marché était réellement
+    # étiré. Les seuils sont par vue : le RSI hebdomadaire, bien plus lisse,
+    # atteint rarement 25 ou 75, ce qui rend ces niveaux d'autant plus parlants.
+    "zone_rsi": {
+        "actif": True,
+        "mode": "premier_pivot",          # ou "les_deux_pivots"
+        "D": {"surachat": 70.0, "survente": 30.0},
+        "W": {"surachat": 75.0, "survente": 25.0},
+    },
     "verifier_ligne": True,
     "verifier_ligne_rsi": False,
     "tolerance_cassure_prix_pct": 0.5,
@@ -195,6 +208,15 @@ def en_hebdomadaire(df):
     return hebdo
 
 
+def calc_atr(df, periode=14):
+    """ATR méthode Wilder — sert d'unité de mesure propre à chaque actif."""
+    haut, bas, clot = (df[c].astype(float) for c in ("High", "Low", "Close"))
+    tr = pd.concat([haut - bas,
+                    (haut - clot.shift()).abs(),
+                    (bas - clot.shift()).abs()], axis=1).max(axis=1)
+    return tr.ewm(alpha=1 / periode, min_periods=1).mean()
+
+
 def calc_rsi(closes, periode=14):
     """RSI méthode Wilder — série complète (identique TradingView)."""
     delta    = closes.diff()
@@ -275,9 +297,14 @@ def pivot_intermediaire_casse(pivots, a, b, cle, sens, tolerance_abs):
     return False
 
 
-def excursion_intermediaire(lows, highs, i1, i2, v1, v2, sens):
+def excursion_intermediaire(lows, highs, i1, i2, v1, v2, sens, unite_atr=None):
     """
-    Profondeur, en %, du plus grand écart du prix entre les deux pivots.
+    Plus grand écart du prix entre les deux pivots.
+
+    Exprimé en multiples d'ATR si `unite_atr` est fourni, en pourcentage
+    sinon. L'ATR rend la mesure comparable d'un actif à l'autre : un écart de
+    130 % sur le bitcoin et de 20 % sur une action peuvent valoir le même
+    nombre d'ATR, donc représenter le même degré d'anomalie.
 
     Pour une divergence de sommets on mesure jusqu'où le prix est descendu sous
     le plus bas des deux sommets ; pour une divergence de creux, jusqu'où il est
@@ -288,15 +315,14 @@ def excursion_intermediaire(lows, highs, i1, i2, v1, v2, sens):
         return 0.0
     if sens == "haut":
         reference = min(v1, v2)
-        extreme   = float(np.nanmin(lows[i1 + 1:i2]))
-        if reference <= 0:
-            return 0.0
-        return max(0.0, (reference - extreme) / reference * 100)
-    reference = max(v1, v2)
-    extreme   = float(np.nanmax(highs[i1 + 1:i2]))
-    if reference <= 0:
-        return 0.0
-    return max(0.0, (extreme - reference) / reference * 100)
+        ecart = reference - float(np.nanmin(lows[i1 + 1:i2]))
+    else:
+        reference = max(v1, v2)
+        ecart = float(np.nanmax(highs[i1 + 1:i2])) - reference
+    ecart = max(0.0, ecart)
+    if unite_atr is not None:
+        return ecart / unite_atr if unite_atr and np.isfinite(unite_atr) else 0.0
+    return ecart / reference * 100 if reference > 0 else 0.0
 
 
 # ─── Détection des divergences ────────────────────────────────────────────────
@@ -323,7 +349,10 @@ def detecter_divergences(df, vue, params):
     cfg_pivot = params["pivot"][vue]
     cfg_ecart = params["ecart_bougies"][vue]
     delta_min = params["rsi_delta_min"]
-    cfg_retr  = params.get("retracement_max_pct", 0)
+    cfg_retr  = params.get("retracement", {})
+    retr_mode = cfg_retr.get("mode", "atr")
+    retr_max  = cfg_retr.get("max_atr" if retr_mode == "atr" else "max_pct", 0)
+    atr_vals  = calc_atr(df, params["rsi_periode"]).to_numpy(dtype=float)
     cfg_zone  = params.get("zone_rsi", {})
 
     # Les pivots sont cherchés sur le RSI lui-même, et le prix est lu sur la même
@@ -405,22 +434,34 @@ def detecter_divergences(df, vue, params):
                 # profonde appartiennent à des phases de marché différentes.
                 # Les relier donne une droite valide mais sans portée pratique.
                 profondeur = excursion_intermediaire(lows, highs, a["idx"], b["idx"],
-                                                     a["prix"], b["prix"], sens)
-                if cfg_retr and profondeur > cfg_retr:
+                                                     a["prix"], b["prix"], sens,
+                                                     atr_vals[b["idx"]] if retr_mode == "atr" else None)
+                if retr_max and profondeur > retr_max:
                     continue
 
                 # Filtre de zone : une divergence baissière n'a de sens que si le
                 # RSI a atteint le surachat, et inversement en survente.
                 if cfg_zone.get("actif", True):
+                    # En mode « premier pivot », seul le pivot d'origine doit
+                    # avoir atteint l'extrême : c'est lui qui atteste que le
+                    # marché était tendu, le second marquant l'essoufflement.
+                    # En mode « les deux pivots », le signal reste cantonné à
+                    # la zone extrême de bout en bout — bien plus rare.
+                    deux = cfg_zone.get("mode") == "les_deux_pivots"
                     if sens == "bas":
-                        if min(a["rsi"], b["rsi"]) > cfg_zone["survente"]:
-                            continue
+                        seuil = cfg_zone[vue]["survente"]
+                        atteint = (max(a["rsi"], b["rsi"]) if deux
+                                   else min(a["rsi"], b["rsi"])) <= seuil
                     else:
-                        if max(a["rsi"], b["rsi"]) < cfg_zone["surachat"]:
-                            continue
+                        seuil = cfg_zone[vue]["surachat"]
+                        atteint = (min(a["rsi"], b["rsi"]) if deux
+                                   else max(a["rsi"], b["rsi"])) >= seuil
+                    if not atteint:
+                        continue
 
                 candidats.append({
                     "retracement_pct": round(profondeur, 1),
+                    "retracement_unite": "ATR" if retr_mode == "atr" else "%",
                     "type": type_cle,
                     "vue": vue,
                     "idx_a": a["idx"], "idx_b": b["idx"],
@@ -684,7 +725,9 @@ def tableau_html(liste, seuil_fort=None):
                   else '<span class="badge bo">en formation</span>')
         fraicheur = f'<div class="sub">{libelle_fraicheur(d)}</div>' 
         retr = d.get("retracement_pct", 0.0)
-        retr_cls = "bn" if retr <= 15 else ("bi" if retr <= 30 else "bo")
+        unite = d.get("retracement_unite", "%")
+        pivot_bas, pivot_haut = (5, 10) if unite == "ATR" else (15, 30)
+        retr_cls = "bn" if retr <= pivot_bas else ("bi" if retr <= pivot_haut else "bo")
         if d.get("date_actuelle") is not None:
             depuis = (d["prix_actuel"] - d["prix_b"]) / d["prix_b"] * 100
             aujourdhui = (f'{d["prix_actuel"]:.2f} · RSI {d["rsi_actuel"]:.1f}'
@@ -702,7 +745,7 @@ def tableau_html(liste, seuil_fort=None):
 <td>{d['prix_a']:.2f} → {d['prix_b']:.2f}<div class="sub">{d['ecart_prix_pct']:+.2f}%</div></td>
 <td>{d['rsi_a']:.1f} → {d['rsi_b']:.1f}</td>
 <td><span class="badge {b_delta}">{d['delta_rsi']:+.1f}</span> {fort}</td>
-<td><span class="badge {retr_cls}">{retr:.1f}%</span></td>
+<td><span class="badge {retr_cls}">{retr:.1f} {unite}</span></td>
 <td>{aujourdhui}</td>
 <td>{statut}</td>
 <td>{d['svg']}</td>
@@ -714,10 +757,17 @@ def tableau_html(liste, seuil_fort=None):
 def generer_html(divergences, tickers, vues, erreurs, params, chemin,
                  anciennes=0, avec_confirmees=False, confirmees_ecartees=0):
     maintenant = datetime.now()
+    r = params.get("retracement", {})
+    retr_txt = (f"{r.get('max_atr')} ATR" if r.get("mode") == "atr"
+                else f"{r.get('max_pct')} %")
     zone = params.get("zone_rsi", {})
-    zone_txt = ("" if not zone.get("actif", True) else
-                f" · RSI en zone (&ge; {zone['surachat']:.0f} pour une baissière,"
-                f" &le; {zone['survente']:.0f} pour une haussière)")
+    zone_txt = ""
+    if zone.get("actif", True):
+        detail = " / ".join(f"{v} : {zone[v]['survente']:.0f}–{zone[v]['surachat']:.0f}"
+                            for v in vues if v in zone)
+        cible = ("les deux pivots" if zone.get("mode") == "les_deux_pivots"
+                 else "le premier pivot")
+        zone_txt = f" · RSI extrême exigé sur {cible} ({detail})"
     hauss = [d for d in divergences if TYPES_META[d["type"]]["biais"] == "haussier"]
     baiss = [d for d in divergences if TYPES_META[d["type"]]["biais"] == "baissier"]
     recentes = [d for d in divergences
@@ -738,7 +788,7 @@ def generer_html(divergences, tickers, vues, erreurs, params, chemin,
 <span style="font-size:14px;padding:3px 10px;border-radius:4px;background:#f0ede8;color:#555;margin-left:8px">{' + '.join(vues)}</span></h1>
 <p class="meta">{len(tickers)} tickers analysés &nbsp;|&nbsp; RSI({params['rsi_periode']}) Wilder &nbsp;|&nbsp; historique {params['periode_historique']} &nbsp;|&nbsp; généré le {maintenant.strftime('%d/%m/%Y %H:%M')}</p>
 <p class="note">Pivots : {params['pivot']['D']['gauche']}/{params['pivot']['D']['droite']} bougies en vue D, {params['pivot']['W']['gauche']}/{params['pivot']['W']['droite']} en vue W · Portée appariée de {params['ecart_bougies']['D']['min']} à {params['ecart_bougies']['D']['max']} bougies (D) — les divergences longues comme courtes sont détectées · Un pivot « en formation » n'a pas encore sa fenêtre droite complète et peut être invalidé par les prochaines bougies.<br>
-Filtres anti-bruit : écart intermédiaire &le; {params['retracement_max_pct']}% (deux pivots séparés par un mouvement plus ample appartiennent à des phases différentes){zone_txt}.</p>
+Filtres anti-bruit : écart intermédiaire &le; {retr_txt} (deux pivots séparés par un mouvement plus ample appartiennent à des phases différentes){zone_txt}.</p>
 
 <div class="kpis">
 <div class="kpi"><div class="kl">Divergences</div><div class="kv">{len(divergences)}</div></div>

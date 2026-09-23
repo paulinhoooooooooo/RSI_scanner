@@ -60,11 +60,17 @@
       },
       "confirmees_seulement": false
     },
-    "retracement_max_pct": 45.0,
     "zone_rsi": {
       "actif": true,
-      "surachat": 60.0,
-      "survente": 40.0
+      "mode": "premier_pivot",
+      "D": {
+        "surachat": 70.0,
+        "survente": 30.0
+      },
+      "W": {
+        "surachat": 75.0,
+        "survente": 25.0
+      }
     },
     "rapport": {
       "fraicheur_max_bougies": {
@@ -75,6 +81,11 @@
     "verifier_ligne_rsi": false,
     "prioritaire": {
       "rsi_delta_fort": 10.0
+    },
+    "retracement": {
+      "mode": "atr",
+      "max_atr": 15.0,
+      "max_pct": 45.0
     }
   }
 }
