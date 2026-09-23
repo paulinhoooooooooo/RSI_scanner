@@ -35,9 +35,9 @@ strategy("VWAP & AMT — stratégie", shorttitle = "VWAP AMT str",
 // ─── Paramètres ────────────────────────────────────────────────────────────
 
 gAnc = "Ancrage"
-ancrage = input.string("Séance", "Période de référence",
-     options = ["Séance", "Semaine", "Mois"], group = gAnc,
-     tooltip = "Séance pour l'intraday, Semaine ou Mois pour le swing.")
+ancrage = input.string("Auto", "Période de référence",
+     options = ["Auto", "Séance", "Semaine", "Mois", "Trimestre"], group = gAnc,
+     tooltip = "L'ancrage doit être STRICTEMENT plus long que l'unité de temps du graphique : sinon chaque bougie devient sa propre période, les bandes se confondent avec le VWAP et aucun signal n'est possible. « Auto » choisit la période immédiatement supérieure — Séance en intraday, Semaine en vue D, Trimestre en vue W.")
 srcVwap = input.source(hlc3, "Source du VWAP", group = gAnc)
 
 gPro = "Profil de volume de la période précédente"
@@ -71,10 +71,30 @@ atrMult = input.float(2.0, "Stop suiveur (× ATR)", minval = 0.2, step = 0.1, gr
 
 atrLen = input.int(14, "Période de l'ATR", minval = 1, group = "Divers")
 
-// ─── Nouvelle période ──────────────────────────────────────────────────────
+// ─── Ancrage : il doit être STRICTEMENT plus long que le graphique ─────────
+// Si la période d'ancrage vaut l'unité de temps du graphique, chaque bougie
+// devient sa propre période : le VWAP se réinitialise à chaque barre,
+// l'écart-type d'un point unique vaut zéro, les bandes se confondent avec le
+// VWAP et le profil n'a jamais assez de bougies pour être calculé. Plus aucun
+// signal n'est alors possible. « Auto » choisit la période immédiatement
+// supérieure à celle du graphique.
 
-resAncre = ancrage == "Séance" ? "D" : ancrage == "Semaine" ? "W" : "M"
-tAncre   = time(resAncre)
+ancrageAuto = timeframe.isintraday ? "D" :
+     timeframe.isdaily   ? "W"  :
+     timeframe.isweekly  ? "3M" : "12M"
+
+resAncre = ancrage == "Auto"     ? ancrageAuto :
+     ancrage == "Séance"    ? "D"  :
+     ancrage == "Semaine"   ? "W"  :
+     ancrage == "Trimestre" ? "3M" : "M"
+
+// Vrai si l'ancrage choisi à la main est trop court pour ce graphique.
+ancrageTropCourt =
+     (resAncre == "D"  and not timeframe.isintraday) or
+     (resAncre == "W"  and (timeframe.isweekly or timeframe.ismonthly)) or
+     (resAncre == "M"  and timeframe.ismonthly)
+
+tAncre = time(resAncre)
 nouvellePeriode = na(tAncre[1]) or tAncre != tAncre[1]
 
 // ─── VWAP et bandes ────────────────────────────────────────────────────────
@@ -295,9 +315,13 @@ plotshape(acceptBas,  "Acceptation en-dessous", shape.labeldown, location.aboveb
 var table tbl = table.new(position.top_right, 1, 1, border_width = 0)
 if barstate.islast
     bool sansVolume = na(volume) or ta.cum(nz(volume)) == 0
+    bool probleme = sansVolume or ancrageTropCourt
     table.cell(tbl, 0, 0,
-         strategieTestee + "  ·  " + ancrage
+         strategieTestee + "  ·  ancrage " + resAncre
+         + (ancrageTropCourt
+              ? "  ·  ANCRAGE TROP COURT pour cette unité de temps — aucun signal possible, passe en Auto"
+              : "")
          + (sansVolume ? "  ·  VOLUMES ABSENTS, résultats sans valeur" : ""),
          text_size = size.small,
-         text_color = sansVolume ? #a32d2d : #6b6459,
-         bgcolor = color.new(#ece8e0, 20))
+         text_color = probleme ? #a32d2d : #6b6459,
+         bgcolor = color.new(probleme ? #fcebeb : #ece8e0, 10))

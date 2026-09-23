@@ -33,9 +33,9 @@ indicator("VWAP & Auction Market Theory", shorttitle = "VWAP AMT",
 // ─── Paramètres ────────────────────────────────────────────────────────────
 
 gAnc = "Ancrage"
-ancrage = input.string("Séance", "Période de référence",
-     options = ["Séance", "Semaine", "Mois"], group = gAnc,
-     tooltip = "Le VWAP et le profil de volume se réinitialisent à chaque nouvelle période. Séance pour l'intraday, Semaine ou Mois pour le swing.")
+ancrage = input.string("Auto", "Période de référence",
+     options = ["Auto", "Séance", "Semaine", "Mois", "Trimestre"], group = gAnc,
+     tooltip = "L'ancrage doit être STRICTEMENT plus long que l'unité de temps du graphique : sinon chaque bougie devient sa propre période, les bandes se confondent avec le VWAP et aucun signal n'est possible. « Auto » choisit la période immédiatement supérieure — Séance en intraday, Semaine en vue D, Trimestre en vue W.")
 srcVwap = input.source(hlc3, "Source du VWAP", group = gAnc)
 
 gBnd = "Bandes d'écart-type"
@@ -64,10 +64,30 @@ barresAcceptation = input.int(2, "  Clôtures requises", minval = 1, maxval = 10
 
 montrerTableau = input.bool(true, "Tableau de lecture", group = "Affichage")
 
-// ─── Nouvelle période ──────────────────────────────────────────────────────
+// ─── Ancrage : il doit être STRICTEMENT plus long que le graphique ─────────
+// Si la période d'ancrage vaut l'unité de temps du graphique, chaque bougie
+// devient sa propre période : le VWAP se réinitialise à chaque barre,
+// l'écart-type d'un point unique vaut zéro, les bandes se confondent avec le
+// VWAP et le profil n'a jamais assez de bougies pour être calculé. Plus aucun
+// signal n'est alors possible. « Auto » choisit la période immédiatement
+// supérieure à celle du graphique.
 
-resAncre = ancrage == "Séance" ? "D" : ancrage == "Semaine" ? "W" : "M"
-tAncre   = time(resAncre)
+ancrageAuto = timeframe.isintraday ? "D" :
+     timeframe.isdaily   ? "W"  :
+     timeframe.isweekly  ? "3M" : "12M"
+
+resAncre = ancrage == "Auto"     ? ancrageAuto :
+     ancrage == "Séance"    ? "D"  :
+     ancrage == "Semaine"   ? "W"  :
+     ancrage == "Trimestre" ? "3M" : "M"
+
+// Vrai si l'ancrage choisi à la main est trop court pour ce graphique.
+ancrageTropCourt =
+     (resAncre == "D"  and not timeframe.isintraday) or
+     (resAncre == "W"  and (timeframe.isweekly or timeframe.ismonthly)) or
+     (resAncre == "M"  and timeframe.ismonthly)
+
+tAncre = time(resAncre)
 nouvellePeriode = na(tAncre[1]) or tAncre != tAncre[1]
 
 // ─── VWAP et bandes ────────────────────────────────────────────────────────
@@ -263,7 +283,7 @@ alertcondition(acceptBas,  "Acceptation sous la valeur",         "Clôtures acce
 
 // ─── Tableau de lecture ────────────────────────────────────────────────────
 
-var table tbl = table.new(position.top_right, 2, 8,
+var table tbl = table.new(position.top_right, 2, 9,
      border_width = 1, border_color = color.new(color.gray, 70))
 
 ligne(int r, string cle, string valeur, color coul) =>
@@ -277,7 +297,9 @@ if montrerTableau and barstate.islast
     color couleurRegime = enValeur ? #185fa5 : desequHaut ? #3b6d11 : #a32d2d
     float ecartVwap = (close - vwapVal) / vwapVal * 100
 
-    ligne(0, "Ancrage", ancrage, #1a1a1a)
+    ligne(0, "Ancrage", resAncre + (ancrage == "Auto" ? " (auto)" : ""), #1a1a1a)
+    if ancrageTropCourt
+        ligne(8, "⚠ Ancrage", "TROP COURT — passe en Auto", #a32d2d)
     ligne(1, "Régime", regime, couleurRegime)
     ligne(2, "VWAP", str.tostring(vwapVal, format.mintick)
          + "  (" + str.tostring(ecartVwap, "+0.00") + " %)", #185fa5)

@@ -50,11 +50,16 @@ memoirePivots = input.int(12,  "Pivots gardés en mémoire",  minval = 2, maxval
 
 gFil = "Filtres anti-bruit"
 rsiDeltaMin   = input.float(6.0,  "Écart RSI minimum (points)",  minval = 0, step = 0.5, group = gFil)
-retracMax     = input.float(45.0, "Écart intermédiaire max (%)", minval = 0, step = 5,   group = gFil,
-     tooltip = "Mouvement maximal du prix entre les deux pivots. Un rebond marqué entre deux creux est normal — c'est la cassure de structure. Un plafond serré écarterait la figure recherchée.")
-zoneActive    = input.bool(true,  "Exiger le RSI en zone", group = gFil)
-seuilSurachat = input.float(60,   "  Surachat (baissière ≥)", group = gFil)
-seuilSurvente = input.float(40,   "  Survente (haussière ≤)", group = gFil)
+retracMode    = input.string("ATR", "Unité de l'écart intermédiaire",
+     options = ["ATR", "Pourcentage"], group = gFil,
+     tooltip = "Entre deux creux, une action bouge de 20 % et le bitcoin de 130 %, sans que la figure soit moins valable dans un cas que dans l'autre. Un plafond en pourcentage écarte de fait tous les actifs très volatils : rapporté à l'ATR, l'écart devient comparable d'un instrument à l'autre.")
+retracMaxAtr  = input.float(15.0, "  Écart maximal (× ATR)", minval = 0, step = 1, group = gFil)
+retracMaxPct  = input.float(45.0, "  Écart maximal (%)",     minval = 0, step = 5, group = gFil)
+modeZone      = input.string("Premier pivot", "Exiger un RSI extrême sur",
+     options = ["Premier pivot", "Les deux pivots", "Désactivé"], group = gFil,
+     tooltip = "Une divergence ne dit quelque chose que si le marché était réellement étiré. En mode « premier pivot », seul le pivot d'origine doit avoir atteint l'extrême : c'est lui qui atteste de la tension, le second marquant l'essoufflement.")
+seuilSurachat = input.float(70,   "  Surachat (manuel, baissière ≥)", group = gFil)
+seuilSurvente = input.float(30,   "  Survente (manuel, haussière ≤)", group = gFil)
 verifLigne    = input.bool(true,  "Rejeter si un pivot intermédiaire casse la droite", group = gFil)
 
 gPos = "Positions"
@@ -82,6 +87,12 @@ pivotLeftEff  = manuel ? pivotLeft  : (modeHebdo ? 3 : 5)
 pivotRightEff = manuel ? pivotRight : (modeHebdo ? 3 : 5)
 ecartMinEff   = manuel ? ecartMin   : (modeHebdo ? 4 : 5)
 ecartMaxEff   = manuel ? ecartMax   : (modeHebdo ? 60 : 160)
+
+// Le RSI hebdomadaire, bien plus lisse, atteint rarement 25 ou 75 : ces
+// niveaux y sont d'autant plus parlants.
+surachatEff = manuel ? seuilSurachat : (modeHebdo ? 75.0 : 70.0)
+surventeEff = manuel ? seuilSurvente : (modeHebdo ? 25.0 : 30.0)
+retracMax   = retracMode == "ATR" ? retracMaxAtr : retracMaxPct
 
 // ─── Indicateurs ───────────────────────────────────────────────────────────
 
@@ -145,11 +156,11 @@ if nouveauHaut
 // Excursion du prix entre les deux pivots, en % du niveau de référence.
 // Pour deux creux on mesure la hauteur du rebond intermédiaire ; pour deux
 // sommets, la profondeur de la chute.
-excursion(int distA, int distB, float refPrix, bool creux) =>
+excursionBrute(int distA, int distB, float refPrix, bool creux) =>
     float extreme = creux ? 0.0 : 1e12
     for i = distB to distA
         extreme := creux ? math.max(extreme, high[i]) : math.min(extreme, low[i])
-    refPrix <= 0 ? 0.0 : math.max(0.0, (creux ? extreme - refPrix : refPrix - extreme) / refPrix * 100)
+    math.max(0.0, creux ? extreme - refPrix : refPrix - extreme)
 
 // Un pivot intermédiaire plus extrême que la droite invalide la figure.
 // On ne teste que les pivots : les bougies qui entourent un point d'ancrage
@@ -197,12 +208,23 @@ chercher(array<int> bars, array<float> rsis, array<float> prix, bool creux, bool
                     // divergence. Un écart de prix nul reste accepté.
                     bool geom = creux ? (ecartPrix <= 0 and dRsi >= rsiDeltaMin)
                                       : (ecartPrix >= 0 and dRsi <= -rsiDeltaMin)
-                    bool zone = not zoneActive or (creux ? math.min(rsiA, rsiB) <= seuilSurvente
-                                                         : math.max(rsiA, rsiB) >= seuilSurachat)
+                    // « Premier pivot » : pour un creux, le RSI monte, donc le
+                    // pivot d'origine est le plus bas des deux — c'est lui qui
+                    // doit avoir touché l'extrême. « Les deux pivots » exige
+                    // que la figure reste dans la zone de bout en bout.
+                    bool deuxPivots = modeZone == "Les deux pivots"
+                    bool zone = modeZone == "Désactivé" or
+                         (creux ? (deuxPivots ? math.max(rsiA, rsiB) : math.min(rsiA, rsiB)) <= surventeEff
+                                : (deuxPivots ? math.min(rsiA, rsiB) : math.max(rsiA, rsiB)) >= surachatEff)
                     bool retrOk = true
                     if retracMax > 0 and geom and zone
-                        float refP = creux ? math.max(prixA, prixB) : math.min(prixA, prixB)
-                        retrOk := excursion(bar_index - barA, bar_index - barB, refP, creux) <= retracMax
+                        float refP  = creux ? math.max(prixA, prixB) : math.min(prixA, prixB)
+                        float brute = excursionBrute(bar_index - barA, bar_index - barB, refP, creux)
+                        float atrRef = atrVal[bar_index - barB]
+                        float mesure = retracMode == "ATR"
+                             ? (na(atrRef) or atrRef <= 0 ? 0.0 : brute / atrRef)
+                             : (refP <= 0 ? 0.0 : brute / refP * 100)
+                        retrOk := mesure <= retracMax
                     bool ligneOk = not verifLigne or
                          not ligneCassee(bars, prix, i, barA, prixA, barB, prixB, creux)
                     if geom and zone and retrOk and ligneOk
@@ -279,5 +301,7 @@ if barstate.islast
     table.cell(infos, 0, 0,
          (modeHebdo ? "Réglages hebdo" : manuel ? "Réglages manuels" : "Réglages journaliers")
          + "  ·  pivots " + str.tostring(pivotLeftEff) + "/" + str.tostring(pivotRightEff)
-         + "  ·  portée " + str.tostring(ecartMinEff) + "-" + str.tostring(ecartMaxEff),
+         + "  ·  portée " + str.tostring(ecartMinEff) + "-" + str.tostring(ecartMaxEff)
+         + "  ·  RSI " + str.tostring(surventeEff, "#") + "/" + str.tostring(surachatEff, "#")
+         + "  ·  écart ≤ " + str.tostring(retracMax, "#.#") + (retracMode == "ATR" ? " ATR" : " %"),
          text_size = size.small, text_color = #6b6459, bgcolor = color.new(#ece8e0, 20))
