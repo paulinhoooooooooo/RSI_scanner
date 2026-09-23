@@ -401,6 +401,37 @@ avec les divergences RSI. Il lit le marché « par la valeur » :
 Sans volumes réels, le VWAP et le profil n'ont pas de sens : le tableau le
 signale explicitement.
 
+## Le signal a-t-il un pouvoir prédictif ?
+
+`etude_evenement.py` répond à une question que le backtest de stratégie ne peut
+pas isoler. Un backtest mesure l'entrée **et** la sortie : un bon signal saboté
+par un mauvais stop y ressemble à un mauvais signal.
+
+```bash
+python3 etude_evenement.py --ouvrir
+```
+
+Pour chaque divergence de la watchlist, il mesure le rendement du prix à +10,
++20 et +50 bougies, **sans stop ni objectif**, et le compare à celui de toutes
+les autres bougies des mêmes titres sur la même période.
+
+Deux précautions contre le biais de rétrospective :
+
+- **L'entrée est prise après la fenêtre de confirmation du pivot**, au moment
+  où il devient réellement connaissable. Mesurer depuis le pivot lui-même
+  utiliserait une information que personne n'avait.
+- **La référence est le titre lui-même**, pas un tirage abstrait : un titre qui
+  monte de 300 % fait monter les deux distributions, et la comparaison reste
+  juste.
+
+**Le seuil est corrigé du nombre de tests.** En testant six combinaisons au
+seuil de 5 %, il s'en trouve une qui passe sur du bruit pur — vérifié en
+faisant tourner l'étude sur des marches aléatoires. Seules les lignes en vert
+franchissent le seuil corrigé ; le bleu signale un résultat qui ne prouve rien.
+
+Si aucune combinaison ne bat le hasard, travailler les sorties est inutile :
+c'est le signal lui-même qui ne porte pas d'information.
+
 ## Limites à connaître
 
 - Les données viennent de **Yahoo Finance** : un ticker mal orthographié ne
