@@ -353,6 +353,34 @@ Il vérifie que la divergence longue est détectée en vue D **et** en vue W. La
 après chaque modification des seuils anti-bruit : c'est le garde-fou qui empêche
 un réglage trop strict d'écarter silencieusement la figure recherchée.
 
+## Backtester sur TradingView
+
+`strategie_tradingview.pine` reprend la même détection sous forme de stratégie
+Pine Script v6, pour mesurer ce que vaut réellement la divergence.
+
+1. Ouvre TradingView, onglet **Pine Editor** en bas de l'écran
+2. Colle le contenu du fichier, **Save**, puis **Add to chart**
+3. Onglet **Strategy Tester** pour les résultats, roue dentée pour les réglages
+
+**Sortie : stop suiveur ATR.** Stop initial une demi-ATR sous le creux du pivot,
+puis suiveur à 2 × ATR du plus haut atteint depuis l'entrée. Le stop ne
+redescend jamais. C'est le compromis qui laisse courir les gains sans exposer
+au scénario où le prix ne se retourne jamais.
+
+**Deux réglages à comparer en priorité :**
+
+| Réglage | Effet |
+|---|---|
+| `Moment de l'entrée` | « Dès la formation » entre le jour même, « Après confirmation » attend 5 bougies |
+| `Vendre à découvert` | désactivé par défaut ; l'activer double le nombre de trades |
+
+Les seuils de détection reprennent ceux de `config.json`, aux mêmes valeurs par
+défaut : la stratégie et le scanner voient donc les mêmes figures.
+
+**Le `Pivots gardés en mémoire` compte.** Trop bas, les divergences longues sont
+perdues — le premier pivot sort de la mémoire avant l'apparition du second. 12
+couvre confortablement une base de six mois.
+
 ## Limites à connaître
 
 - Les données viennent de **Yahoo Finance** : un ticker mal orthographié ne

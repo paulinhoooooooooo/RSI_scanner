@@ -1,0 +1,256 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════
+//  Divergences RSI — stratégie à stop suiveur ATR
+//
+//  Réplique la logique de RSI_scanner.py pour la backtester sur TradingView.
+//
+//  Détection   les pivots sont cherchés sur le RSI lui-même, le prix est lu sur
+//              la même bougie : un point du RSI est donc toujours un vrai
+//              sommet ou un vrai creux de l'indicateur.
+//  Entrée      dès la formation du pivot (réactif) ou après confirmation.
+//  Sortie      stop initial sous le pivot, puis suiveur à N × ATR du plus haut
+//              atteint depuis l'entrée. Le stop ne redescend jamais.
+//
+//  Les seuils reprennent les clés de config.json du scanner.
+// ═══════════════════════════════════════════════════════════════════════════
+
+strategy("Divergences RSI — stop suiveur ATR",
+     shorttitle              = "RSI Div ATR",
+     overlay                 = true,
+     initial_capital         = 10000,
+     default_qty_type        = strategy.percent_of_equity,
+     default_qty_value       = 100,
+     commission_type         = strategy.commission.percent,
+     commission_value        = 0.05,
+     slippage                = 2,
+     process_orders_on_close = true,
+     calc_on_every_tick      = false)
+
+// ─── Paramètres ────────────────────────────────────────────────────────────
+
+gDet = "Détection"
+rsiLen     = input.int(14, "Période du RSI",           minval = 2, group = gDet)
+pivotLeft  = input.int(5,  "Pivot — bougies à gauche", minval = 1, group = gDet)
+pivotRight = input.int(5,  "Pivot — bougies à droite", minval = 1, group = gDet,
+     tooltip = "Sert à la confirmation. En mode « dès la formation », l'entrée ne les attend pas.")
+modeEntree = input.string("Dès la formation", "Moment de l'entrée",
+     options = ["Dès la formation", "Après confirmation"], group = gDet,
+     tooltip = "Dès la formation : réactif, mais certains pivots seront invalidés ensuite. Après confirmation : plus fiable, entrée retardée de « bougies à droite ».")
+
+gApp = "Appariement des pivots"
+ecartMin      = input.int(5,   "Portée minimale (bougies)", minval = 2, group = gApp)
+ecartMax      = input.int(160, "Portée maximale (bougies)", minval = 5, group = gApp,
+     tooltip = "160 en vue journalière laisse passer les bases de six mois.")
+memoirePivots = input.int(12,  "Pivots gardés en mémoire",  minval = 2, maxval = 30, group = gApp,
+     tooltip = "Limite la profondeur d'appariement. Trop bas, les divergences longues sont perdues : le premier pivot est sorti de la mémoire avant l'apparition du second.")
+
+gFil = "Filtres anti-bruit"
+rsiDeltaMin   = input.float(6.0,  "Écart RSI minimum (points)",  minval = 0, step = 0.5, group = gFil)
+retracMax     = input.float(45.0, "Écart intermédiaire max (%)", minval = 0, step = 5,   group = gFil,
+     tooltip = "Mouvement maximal du prix entre les deux pivots. Un rebond marqué entre deux creux est normal — c'est la cassure de structure. Un plafond serré écarterait la figure recherchée.")
+zoneActive    = input.bool(true,  "Exiger le RSI en zone", group = gFil)
+seuilSurachat = input.float(60,   "  Surachat (baissière ≥)", group = gFil)
+seuilSurvente = input.float(40,   "  Survente (haussière ≤)", group = gFil)
+verifLigne    = input.bool(true,  "Rejeter si un pivot intermédiaire casse la droite", group = gFil)
+
+gPos = "Positions"
+prendreLong  = input.bool(true,  "Acheter sur divergence haussière",            group = gPos)
+prendreShort = input.bool(false, "Vendre à découvert sur divergence baissière", group = gPos)
+
+gSor = "Sortie — stop suiveur ATR"
+atrLen    = input.int(14,    "Période de l'ATR",                  minval = 1,   group = gSor)
+atrMult   = input.float(2.0, "Distance du suiveur (× ATR)",       minval = 0.2, step = 0.1, group = gSor)
+margeStop = input.float(0.5, "Stop initial sous le pivot (× ATR)", minval = 0,  step = 0.1, group = gSor,
+     tooltip = "Posé exactement sur le plus bas du pivot, le risque se réduirait à la mèche de la bougie d'entrée.")
+
+tracerLignes = input.bool(true, "Tracer les divergences", group = "Affichage")
+
+// ─── Indicateurs ───────────────────────────────────────────────────────────
+
+rsi    = ta.rsi(close, rsiLen)
+atrVal = ta.atr(atrLen)
+
+// ─── Mémoire des pivots ────────────────────────────────────────────────────
+// Chaque pivot retient sa bougie, sa valeur de RSI, et le prix lu sur cette
+// même bougie : le plus bas pour un creux, le plus haut pour un sommet.
+
+var array<int>   basBar   = array.new<int>()
+var array<float> basRsi   = array.new<float>()
+var array<float> basPrix  = array.new<float>()
+var array<int>   hautBar  = array.new<int>()
+var array<float> hautRsi  = array.new<float>()
+var array<float> hautPrix = array.new<float>()
+
+// Un pivot trop proche du précédent le remplace : en mode « dès la formation »,
+// chaque nouvelle extrême du RSI ne fait que prolonger le même creux.
+empiler(array<int> bars, array<float> rsis, array<float> prix,
+         int b, float r, float p) =>
+    int taille = array.size(bars)
+    bool remplace = taille > 0 and (b - array.get(bars, taille - 1)) < pivotLeft
+    if remplace
+        array.set(bars, taille - 1, b)
+        array.set(rsis, taille - 1, r)
+        array.set(prix, taille - 1, p)
+    else
+        array.push(bars, b)
+        array.push(rsis, r)
+        array.push(prix, p)
+        if array.size(bars) > memoirePivots
+            array.shift(bars)
+            array.shift(rsis)
+            array.shift(prix)
+    true
+
+// ─── Repérage d'un nouveau pivot sur le RSI ────────────────────────────────
+
+confirme = modeEntree == "Après confirmation"
+
+// Mode confirmation : ta.pivotlow ne répond que `pivotRight` bougies plus tard.
+plConf = ta.pivotlow(rsi, pivotLeft, pivotRight)
+phConf = ta.pivothigh(rsi, pivotLeft, pivotRight)
+
+// Mode formation : le RSI du jour passe sous les `pivotLeft` précédents.
+plNow = rsi < ta.lowest(rsi, pivotLeft)[1]
+phNow = rsi > ta.highest(rsi, pivotLeft)[1]
+
+nouveauBas  = confirme ? not na(plConf) : plNow
+nouveauHaut = confirme ? not na(phConf) : phNow
+decalage    = confirme ? pivotRight : 0
+
+if nouveauBas
+    empiler(basBar, basRsi, basPrix, bar_index - decalage, rsi[decalage], low[decalage])
+if nouveauHaut
+    empiler(hautBar, hautRsi, hautPrix, bar_index - decalage, rsi[decalage], high[decalage])
+
+// ─── Filtres appliqués à une paire de pivots ───────────────────────────────
+
+// Excursion du prix entre les deux pivots, en % du niveau de référence.
+// Pour deux creux on mesure la hauteur du rebond intermédiaire ; pour deux
+// sommets, la profondeur de la chute.
+excursion(int distA, int distB, float refPrix, bool creux) =>
+    float extreme = creux ? 0.0 : 1e12
+    for i = distB to distA
+        extreme := creux ? math.max(extreme, high[i]) : math.min(extreme, low[i])
+    refPrix <= 0 ? 0.0 : math.max(0.0, (creux ? extreme - refPrix : refPrix - extreme) / refPrix * 100)
+
+// Un pivot intermédiaire plus extrême que la droite invalide la figure.
+// On ne teste que les pivots : les bougies qui entourent un point d'ancrage
+// sont presque toujours du mauvais côté d'une droite en pente, et les tester
+// rejetterait les divergences les plus franches.
+ligneCassee(array<int> bars, array<float> prix, int iA,
+             int barA, float pA, int barB, float pB, bool creux) =>
+    bool cassee = false
+    int  ecart  = barB - barA
+    if ecart > 1
+        for k = iA + 1 to array.size(bars) - 1
+            int bk = array.get(bars, k)
+            if bk > barA and bk < barB
+                float ligne = pA + (pB - pA) * (bk - barA) / ecart
+                float vk    = array.get(prix, k)
+                if (creux and vk < ligne) or (not creux and vk > ligne)
+                    cassee := true
+    cassee
+
+// ─── Recherche d'une divergence sur le dernier pivot enregistré ────────────
+// Renvoie [trouvée, bougie du premier pivot, prix du premier pivot].
+
+chercher(array<int> bars, array<float> rsis, array<float> prix, bool creux, bool actif) =>
+    bool  trouve   = false
+    int   barAOut  = na
+    float prixAOut = na
+    int   n        = array.size(bars)
+    if actif and n >= 2
+        int   barB  = array.get(bars,  n - 1)
+        float rsiB  = array.get(rsis,  n - 1)
+        float prixB = array.get(prix,  n - 1)
+        // du pivot le plus récent vers le plus ancien
+        for j = 0 to n - 2
+            int i = n - 2 - j
+            if not trouve
+                int   barA  = array.get(bars,  i)
+                float rsiA  = array.get(rsis,  i)
+                float prixA = array.get(prix,  i)
+                int   span  = barB - barA
+                if span >= ecartMin and span <= ecartMax and prixA > 0
+                    float ecartPrix = (prixB - prixA) / prixA
+                    float dRsi      = rsiB - rsiA
+                    // Le prix ne doit jamais partir dans le même sens que le
+                    // RSI : deux droites parallèles sont une tendance, pas une
+                    // divergence. Un écart de prix nul reste accepté.
+                    bool geom = creux ? (ecartPrix <= 0 and dRsi >= rsiDeltaMin)
+                                      : (ecartPrix >= 0 and dRsi <= -rsiDeltaMin)
+                    bool zone = not zoneActive or (creux ? math.min(rsiA, rsiB) <= seuilSurvente
+                                                         : math.max(rsiA, rsiB) >= seuilSurachat)
+                    bool retrOk = true
+                    if retracMax > 0 and geom and zone
+                        float refP = creux ? math.max(prixA, prixB) : math.min(prixA, prixB)
+                        retrOk := excursion(bar_index - barA, bar_index - barB, refP, creux) <= retracMax
+                    bool ligneOk = not verifLigne or
+                         not ligneCassee(bars, prix, i, barA, prixA, barB, prixB, creux)
+                    if geom and zone and retrOk and ligneOk
+                        trouve   := true
+                        barAOut  := barA
+                        prixAOut := prixA
+    [trouve, barAOut, prixAOut]
+
+[trouveBas,  barABas,  prixABas]  = chercher(basBar,  basRsi,  basPrix,  true,
+                                              nouveauBas and prendreLong)
+[trouveHaut, barAHaut, prixAHaut] = chercher(hautBar, hautRsi, hautPrix, false,
+                                              nouveauHaut and prendreShort)
+
+divHaussiere = trouveBas
+divBaissiere = trouveHaut
+
+// ─── Tracé des divergences ─────────────────────────────────────────────────
+
+if tracerLignes and divHaussiere
+    line.new(barABas, prixABas, bar_index - decalage, low[decalage],
+         xloc = xloc.bar_index, color = #0f6e56, width = 2)
+if tracerLignes and divBaissiere
+    line.new(barAHaut, prixAHaut, bar_index - decalage, high[decalage],
+         xloc = xloc.bar_index, color = #a32d2d, width = 2)
+
+// ─── Entrées ───────────────────────────────────────────────────────────────
+
+var float stopCourant  = na
+var float extremeSuivi = na
+
+if divHaussiere and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    stopCourant  := low[decalage] - margeStop * atrVal
+    extremeSuivi := high
+
+if divBaissiere and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+    stopCourant  := high[decalage] + margeStop * atrVal
+    extremeSuivi := low
+
+// ─── Sortie : stop suiveur ATR ─────────────────────────────────────────────
+// Le stop suit le plus haut atteint depuis l'entrée, à atrMult × ATR, et ne
+// redescend jamais. Symétrique pour une position vendeuse.
+
+if strategy.position_size > 0
+    extremeSuivi := math.max(nz(extremeSuivi, high), high)
+    stopCourant  := math.max(nz(stopCourant, low - margeStop * atrVal),
+                             extremeSuivi - atrMult * atrVal)
+    strategy.exit("Sortie L", from_entry = "Long", stop = stopCourant)
+
+if strategy.position_size < 0
+    extremeSuivi := math.min(nz(extremeSuivi, low), low)
+    stopCourant  := math.min(nz(stopCourant, high + margeStop * atrVal),
+                             extremeSuivi + atrMult * atrVal)
+    strategy.exit("Sortie S", from_entry = "Short", stop = stopCourant)
+
+if strategy.position_size == 0
+    stopCourant  := na
+    extremeSuivi := na
+
+// ─── Visualisation ─────────────────────────────────────────────────────────
+
+plot(strategy.position_size != 0 ? stopCourant : na, "Stop suiveur",
+     color = #ba7517, style = plot.style_linebr, linewidth = 2)
+
+plotshape(divHaussiere, "Divergence haussière", shape.triangleup,
+     location.belowbar, color = #0f6e56, size = size.tiny)
+plotshape(divBaissiere, "Divergence baissière", shape.triangledown,
+     location.abovebar, color = #a32d2d, size = size.tiny)
