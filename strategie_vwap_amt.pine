@@ -1,0 +1,303 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════
+//  VWAP & Auction Market Theory — version STRATÉGIE
+//
+//  Même lecture que l'indicateur `indicateur_vwap_amt.pine`, mais déclarée en
+//  strategy() pour apparaître dans le Strategy Tester.
+//
+//  L'indicateur porte deux signaux de nature OPPOSÉE :
+//
+//    • Rejet d'un extrême (±2σ)  → retour à la valeur. Vaut en ÉQUILIBRE.
+//    • Acceptation hors valeur   → la valeur migre. Vaut en DÉSÉQUILIBRE.
+//
+//  Les tester ensemble n'apprendrait rien : les gains de l'un compenseraient
+//  les pertes de l'autre et le total resterait plat. Ils sont donc activables
+//  séparément, avec chacun sa logique de sortie. Commence par les backtester
+//  UN PAR UN.
+//
+//  ATTENTION : sans volumes réels, le VWAP et le profil n'ont pas de sens.
+//  C'est le cas de la plupart des paires de devises et de certains indices.
+// ═══════════════════════════════════════════════════════════════════════════
+
+strategy("VWAP & AMT — stratégie", shorttitle = "VWAP AMT str",
+     overlay                 = true,
+     initial_capital         = 10000,
+     default_qty_type        = strategy.percent_of_equity,
+     default_qty_value       = 100,
+     commission_type         = strategy.commission.percent,
+     commission_value        = 0.05,
+     slippage                = 2,
+     process_orders_on_close = true,
+     calc_on_every_tick      = false,
+     max_lines_count         = 500,
+     max_bars_back           = 500)
+
+// ─── Paramètres ────────────────────────────────────────────────────────────
+
+gAnc = "Ancrage"
+ancrage = input.string("Séance", "Période de référence",
+     options = ["Séance", "Semaine", "Mois"], group = gAnc,
+     tooltip = "Séance pour l'intraday, Semaine ou Mois pour le swing.")
+srcVwap = input.source(hlc3, "Source du VWAP", group = gAnc)
+
+gPro = "Profil de volume de la période précédente"
+nbNiveaux = input.int(24, "Finesse du profil (niveaux)", minval = 8, maxval = 50, group = gPro)
+pctValeur = input.float(70, "Zone de valeur (%)", minval = 50, maxval = 95, step = 5, group = gPro)
+montrerProfil = input.bool(true, "Tracer POC / VAH / VAL", group = gPro)
+
+gStr = "Signal à tester"
+strategieTestee = input.string("Rejet des extrêmes", "Stratégie",
+     options = ["Rejet des extrêmes", "Acceptation hors valeur", "Les deux"], group = gStr,
+     tooltip = "Les deux signaux sont de nature opposée. Les activer ensemble mélange deux logiques contraires et donne un résultat plat qui n'apprend rien. Teste-les un par un.")
+prendreLong  = input.bool(true, "Positions acheteuses",       group = gStr)
+prendreShort = input.bool(true, "Positions vendeuses",        group = gStr)
+filtrerRegime = input.bool(true, "N'accepter le rejet qu'en équilibre", group = gStr,
+     tooltip = "Fader un extrême pendant une tendance établie revient à se mettre en travers du mouvement. Ce filtre n'autorise le rejet que lorsque la clôture est dans la zone ±1σ.")
+
+gRej = "Rejet — sortie"
+cibleRejet = input.string("VWAP", "Objectif",
+     options = ["VWAP", "Bande opposée ±1σ"], group = gRej,
+     tooltip = "Le rejet d'un extrême est un pari sur le retour à la valeur : l'objectif naturel est le VWAP lui-même.")
+margeStopRejet = input.float(0.5, "Stop au-delà de l'extrême (× ATR)",
+     minval = 0.1, step = 0.1, group = gRej)
+dureeMaxRejet = input.int(20, "Durée maximale (bougies, 0 = illimité)",
+     minval = 0, group = gRej,
+     tooltip = "Un retour à la valeur qui ne se produit pas rapidement ne se produira pas. Cette sortie libère le capital.")
+
+gCas = "Acceptation — sortie"
+barresAcceptation = input.int(2, "Clôtures hors valeur requises", minval = 1, maxval = 10, group = gCas)
+atrMult = input.float(2.0, "Stop suiveur (× ATR)", minval = 0.2, step = 0.1, group = gCas,
+     tooltip = "L'acceptation est un pari de continuation : le stop suiveur laisse courir le mouvement.")
+
+atrLen = input.int(14, "Période de l'ATR", minval = 1, group = "Divers")
+
+// ─── Nouvelle période ──────────────────────────────────────────────────────
+
+resAncre = ancrage == "Séance" ? "D" : ancrage == "Semaine" ? "W" : "M"
+tAncre   = time(resAncre)
+nouvellePeriode = na(tAncre[1]) or tAncre != tAncre[1]
+
+// ─── VWAP et bandes ────────────────────────────────────────────────────────
+
+[vwapVal, b1Up, b1Dn] = ta.vwap(srcVwap, nouvellePeriode, 1.0)
+[_v2,     b2Up, b2Dn] = ta.vwap(srcVwap, nouvellePeriode, 2.0)
+
+atrVal = ta.atr(atrLen)
+
+pVwap = plot(vwapVal, "VWAP", color = #185fa5, linewidth = 2)
+p1Up  = plot(b1Up, "+1σ", color = color.new(#185fa5, 40))
+p1Dn  = plot(b1Dn, "−1σ", color = color.new(#185fa5, 40))
+plot(b2Up, "+2σ", color = color.new(#ba7517, 30))
+plot(b2Dn, "−2σ", color = color.new(#ba7517, 30))
+fill(p1Up, p1Dn, color = color.new(#185fa5, 93), title = "Zone de valeur ±1σ")
+
+// ─── Profil de volume ──────────────────────────────────────────────────────
+
+var array<float> perHaut = array.new<float>()
+var array<float> perBas  = array.new<float>()
+var array<float> perVol  = array.new<float>()
+
+// Renvoie [POC, VAH, VAL]. `actif` évite d'exécuter le calcul à chaque bougie :
+// la fonction est appelée en portée globale, seul son contenu est conditionnel.
+calculerProfil(array<float> hs, array<float> ls, array<float> vs,
+                int niveaux, float pct, bool actif) =>
+    float poc = na
+    float vah = na
+    float val = na
+    int n = array.size(hs)
+    if actif and n > 2
+        float bas     = array.min(ls)
+        float haut    = array.max(hs)
+        float etendue = haut - bas
+        if etendue > 0
+            float pas = etendue / niveaux
+            array<float> seaux = array.new<float>(niveaux, 0.0)
+            for i = 0 to n - 1
+                float bh = array.get(hs, i)
+                float bl = array.get(ls, i)
+                float bv = array.get(vs, i)
+                int iDeb = math.max(0, math.min(niveaux - 1, int((bl - bas) / pas)))
+                int iFin = math.max(0, math.min(niveaux - 1, int((bh - bas) / pas)))
+                float part = bv / (iFin - iDeb + 1)
+                for k = iDeb to iFin
+                    array.set(seaux, k, array.get(seaux, k) + part)
+            float volMax = array.max(seaux)
+            int   iPoc   = array.indexof(seaux, volMax)
+            float total  = array.sum(seaux)
+            float cible  = total * pct / 100.0
+            float cumul  = volMax
+            int   iBas   = iPoc
+            int   iHaut  = iPoc
+            while cumul < cible and (iBas > 0 or iHaut < niveaux - 1)
+                float vDessous = iBas  > 0           ? array.get(seaux, iBas - 1)  : -1.0
+                float vDessus  = iHaut < niveaux - 1 ? array.get(seaux, iHaut + 1) : -1.0
+                if vDessus >= vDessous
+                    iHaut += 1
+                    cumul += vDessus
+                else
+                    iBas -= 1
+                    cumul += vDessous
+            poc := bas + (iPoc + 0.5) * pas
+            vah := bas + (iHaut + 1) * pas
+            val := bas + iBas * pas
+    [poc, vah, val]
+
+var float pocPrec = na
+var float vahPrec = na
+var float valPrec = na
+
+[pNouv, hNouv, bNouv] = calculerProfil(perHaut, perBas, perVol,
+                                        nbNiveaux, pctValeur, nouvellePeriode)
+
+if nouvellePeriode
+    if not na(pNouv)
+        pocPrec := pNouv
+        vahPrec := hNouv
+        valPrec := bNouv
+    array.clear(perHaut)
+    array.clear(perBas)
+    array.clear(perVol)
+
+array.push(perHaut, high)
+array.push(perBas,  low)
+array.push(perVol,  nz(volume))
+
+var line lPoc = na
+var line lVah = na
+var line lVal = na
+
+if montrerProfil and nouvellePeriode and not na(pocPrec)
+    lPoc := line.new(bar_index, pocPrec, bar_index, pocPrec, color = #a32d2d, width = 2)
+    lVah := line.new(bar_index, vahPrec, bar_index, vahPrec, color = #3b6d11,
+         width = 1, style = line.style_dashed)
+    lVal := line.new(bar_index, valPrec, bar_index, valPrec, color = #3b6d11,
+         width = 1, style = line.style_dashed)
+
+if not na(lPoc)
+    line.set_xy2(lPoc, bar_index, pocPrec)
+    line.set_xy2(lVah, bar_index, vahPrec)
+    line.set_xy2(lVal, bar_index, valPrec)
+
+// ─── Régime ────────────────────────────────────────────────────────────────
+
+enValeur = close <= b1Up and close >= b1Dn
+
+// ─── Signaux ───────────────────────────────────────────────────────────────
+
+testeRejet  = strategieTestee == "Rejet des extrêmes"     or strategieTestee == "Les deux"
+testeCassure = strategieTestee == "Acceptation hors valeur" or strategieTestee == "Les deux"
+
+regimeOk = not filtrerRegime or enValeur
+
+// Le prix est allé chercher au-delà de 2σ et n'y est pas resté : l'enchère a
+// exploré, les intervenants ont refusé. Pari sur le retour vers le VWAP.
+rejetHaut = testeRejet and regimeOk and high > b2Up and close < b2Up and close < open
+rejetBas  = testeRejet and regimeOk and low  < b2Dn and close > b2Dn and close > open
+
+// Plusieurs clôtures consécutives hors de la valeur précédente : le marché ne
+// rejette plus, il accepte. La valeur migre, pari de continuation.
+//
+// ta.barssince renvoie le nombre de bougies depuis la dernière clôture rentrée
+// dans la valeur : il égale donc le nombre de clôtures consécutives au-dehors.
+clotAuDessus  = not na(vahPrec) and close > vahPrec
+clotEnDessous = not na(valPrec) and close < valPrec
+compteurHaut  = ta.barssince(not clotAuDessus)
+compteurBas   = ta.barssince(not clotEnDessous)
+
+acceptHaut = testeCassure and clotAuDessus  and compteurHaut == barresAcceptation
+acceptBas  = testeCassure and clotEnDessous and compteurBas  == barresAcceptation
+
+// ─── Entrées ───────────────────────────────────────────────────────────────
+// `modePos` retient la logique qui a ouvert la position : les deux signaux
+// appellent des sorties différentes, un retour à la valeur d'un côté, un stop
+// suiveur de l'autre.
+
+var string modePos      = na
+var float  stopCourant  = na
+var float  extremeSuivi = na
+var int    barreEntree  = na
+
+libre = strategy.position_size == 0
+
+if libre and rejetBas and prendreLong
+    strategy.entry("Long", strategy.long)
+    modePos      := "rejet"
+    stopCourant  := low - margeStopRejet * atrVal
+    barreEntree  := bar_index
+
+if libre and rejetHaut and prendreShort
+    strategy.entry("Short", strategy.short)
+    modePos      := "rejet"
+    stopCourant  := high + margeStopRejet * atrVal
+    barreEntree  := bar_index
+
+if libre and acceptHaut and prendreLong
+    strategy.entry("Long", strategy.long)
+    modePos      := "cassure"
+    stopCourant  := math.min(vahPrec, low - atrVal)   // le retour dans la valeur invalide
+    extremeSuivi := high
+    barreEntree  := bar_index
+
+if libre and acceptBas and prendreShort
+    strategy.entry("Short", strategy.short)
+    modePos      := "cassure"
+    stopCourant  := math.max(valPrec, high + atrVal)
+    extremeSuivi := low
+    barreEntree  := bar_index
+
+// ─── Sorties ───────────────────────────────────────────────────────────────
+
+cibleLong  = cibleRejet == "VWAP" ? vwapVal : b1Up
+cibleShort = cibleRejet == "VWAP" ? vwapVal : b1Dn
+
+if strategy.position_size > 0
+    if modePos == "rejet"
+        // Objectif : le retour à la valeur. Le stop reste sous l'extrême rejeté.
+        strategy.exit("Sortie L", from_entry = "Long", stop = stopCourant, limit = cibleLong)
+    else
+        extremeSuivi := math.max(nz(extremeSuivi, high), high)
+        stopCourant  := math.max(nz(stopCourant, low - atrVal), extremeSuivi - atrMult * atrVal)
+        strategy.exit("Sortie L", from_entry = "Long", stop = stopCourant)
+
+if strategy.position_size < 0
+    if modePos == "rejet"
+        strategy.exit("Sortie S", from_entry = "Short", stop = stopCourant, limit = cibleShort)
+    else
+        extremeSuivi := math.min(nz(extremeSuivi, low), low)
+        stopCourant  := math.min(nz(stopCourant, high + atrVal), extremeSuivi + atrMult * atrVal)
+        strategy.exit("Sortie S", from_entry = "Short", stop = stopCourant)
+
+// Un retour à la valeur qui tarde ne viendra pas : on libère le capital.
+if dureeMaxRejet > 0 and modePos == "rejet" and strategy.position_size != 0
+     and not na(barreEntree) and bar_index - barreEntree >= dureeMaxRejet
+    strategy.close_all("Durée max")
+
+if strategy.position_size == 0
+    modePos      := na
+    stopCourant  := na
+    extremeSuivi := na
+    barreEntree  := na
+
+// ─── Visualisation ─────────────────────────────────────────────────────────
+
+plot(strategy.position_size != 0 and modePos == "cassure" ? stopCourant : na,
+     "Stop suiveur", color = #ba7517, style = plot.style_linebr, linewidth = 2)
+
+plotshape(rejetHaut,  "Rejet extrême haut", shape.triangledown, location.abovebar,
+     color = #a32d2d, size = size.tiny)
+plotshape(rejetBas,   "Rejet extrême bas",  shape.triangleup,   location.belowbar,
+     color = #0f6e56, size = size.tiny)
+plotshape(acceptHaut, "Acceptation au-dessus", shape.labelup, location.belowbar,
+     color = color.new(#3b6d11, 20), text = "Acc.", textcolor = color.white, size = size.tiny)
+plotshape(acceptBas,  "Acceptation en-dessous", shape.labeldown, location.abovebar,
+     color = color.new(#a32d2d, 20), text = "Acc.", textcolor = color.white, size = size.tiny)
+
+var table tbl = table.new(position.top_right, 1, 1, border_width = 0)
+if barstate.islast
+    bool sansVolume = na(volume) or ta.cum(nz(volume)) == 0
+    table.cell(tbl, 0, 0,
+         strategieTestee + "  ·  " + ancrage
+         + (sansVolume ? "  ·  VOLUMES ABSENTS, résultats sans valeur" : ""),
+         text_size = size.small,
+         text_color = sansVolume ? #a32d2d : #6b6459,
+         bgcolor = color.new(#ece8e0, 20))
