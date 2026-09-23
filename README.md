@@ -120,6 +120,11 @@ pour chaque divergence, un mini-graphique en **bougies japonaises** surmontant
 le RSI, avec les deux droites tracées, un axe de dates et des repères verticaux
 sur les deux pivots pour aligner le prix et le RSI à l'œil.
 
+Le graphique court **jusqu'à la dernière bougie disponible**, pas seulement
+jusqu'au second pivot : ce qui s'est passé depuis la divergence est le premier
+élément à regarder. La colonne **Aujourd'hui** donne le dernier cours, le RSI du
+jour et l'écart parcouru depuis le pivot.
+
 ---
 
 ## Les quatre types de divergences

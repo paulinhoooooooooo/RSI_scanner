@@ -478,6 +478,9 @@ def analyser_ticker(ticker, params, vues):
         divergences, rsi_serie = detecter_divergences(data, vue, params)
         for d in divergences:
             d["ticker"] = ticker
+            d["date_actuelle"] = data.index[-1]
+            d["prix_actuel"] = float(data["Close"].iloc[-1])
+            d["rsi_actuel"] = float(rsi_serie.iloc[-1])
             d["svg"] = rendre_svg(data, rsi_serie, d)
             resultats.append(d)
     return resultats, None
@@ -487,9 +490,12 @@ def analyser_ticker(ticker, params, vues):
 
 def rendre_svg(df, rsi_serie, d, largeur=440, h_prix=104, h_rsi=58, h_dates=15):
     """Vignette en bougies + RSI sur la fenêtre de la divergence, avec les 2 droites."""
+    # Le graphique court jusqu'à la dernière bougie disponible, pas seulement
+    # jusqu'au second pivot : ce qui s'est passé depuis la divergence est le
+    # premier élément à regarder, et sans lui on ignore où en est le titre.
     marge = max(4, d["span"] // 6)
     debut = max(0, d["idx_a"] - marge)
-    fin   = min(len(df) - 1, d["idx_b"] + marge)
+    fin   = len(df) - 1
     if fin <= debut:
         return ""
 
@@ -551,8 +557,11 @@ def rendre_svg(df, rsi_serie, d, largeur=440, h_prix=104, h_rsi=58, h_dates=15):
     fmt = "%m/%y" if jours_couverts > 240 else "%d/%m"
     y_texte = h_prix + 8 + h_rsi + 11
     reperes, occupes = [], []
-    candidats = [(debut, "start"), (d["idx_a"], "middle"),
-                 (d["idx_b"], "middle"), (fin, "end")]
+    # Les bornes d'abord : la date de fin est celle qui situe le titre
+    # aujourd'hui. Les pivots ne prennent une étiquette que s'il reste
+    # la place, leurs dates figurant déjà en colonnes du tableau.
+    candidats = [(debut, "start"), (fin, "end"),
+                 (d["idx_a"], "middle"), (d["idx_b"], "middle")]
     for idx, ancrage in candidats:
         xc = x(idx)
         largeur_txt = 30
@@ -663,7 +672,7 @@ def tableau_html(liste, seuil_fort=None):
               '<th>Ticker</th><th>Vue</th><th>Type</th><th>Portée</th>'
               '<th>Pivot 1</th><th>Pivot 2</th><th>Prix</th>'
               '<th>RSI</th><th>Δ RSI</th><th>Écart interm.</th>'
-              '<th>Statut</th><th>Graphique</th>'
+              '<th>Aujourd\'hui</th><th>Statut</th><th>Graphique</th>'
               '</tr></thead><tbody>']
     for d in liste:
         meta = TYPES_META[d["type"]]
@@ -676,6 +685,13 @@ def tableau_html(liste, seuil_fort=None):
         fraicheur = f'<div class="sub">{libelle_fraicheur(d)}</div>' 
         retr = d.get("retracement_pct", 0.0)
         retr_cls = "bn" if retr <= 15 else ("bi" if retr <= 30 else "bo")
+        if d.get("date_actuelle") is not None:
+            depuis = (d["prix_actuel"] - d["prix_b"]) / d["prix_b"] * 100
+            aujourdhui = (f'{d["prix_actuel"]:.2f} · RSI {d["rsi_actuel"]:.1f}'
+                          f'<div class="sub">{d["date_actuelle"].strftime("%d/%m")} · '
+                          f'{depuis:+.2f}% depuis le pivot</div>')
+        else:
+            aujourdhui = "—" 
         lignes.append(f"""<tr class="{cls}">
 <td class="tk">{d['ticker']}</td>
 <td><span class="badge vue-{d['vue']}">{d['vue']}</span></td>
@@ -687,6 +703,7 @@ def tableau_html(liste, seuil_fort=None):
 <td>{d['rsi_a']:.1f} → {d['rsi_b']:.1f}</td>
 <td><span class="badge {b_delta}">{d['delta_rsi']:+.1f}</span> {fort}</td>
 <td><span class="badge {retr_cls}">{retr:.1f}%</span></td>
+<td>{aujourdhui}</td>
 <td>{statut}</td>
 <td>{d['svg']}</td>
 </tr>""")
