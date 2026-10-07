@@ -86,6 +86,7 @@
       "mode": "atr",
       "max_atr": 15.0,
       "max_pct": 45.0
-    }
+    },
+    "ajuster_dividendes": false
   }
 }

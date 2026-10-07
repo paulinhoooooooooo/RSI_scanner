@@ -45,6 +45,9 @@ RAPPORTS_DIR  = BASE_DIR / "rapports"
 # Valeurs utilisées si la section "divergence" est absente de config.json
 DEFAUTS = {
     "periode_historique": "3y",
+    # Faux = prix bruts, comme les plateformes de graphiques. Vrai fausse
+    # la comparaison entre pivots distants sur les titres à dividende.
+    "ajuster_dividendes": False,
     "rsi_periode": 14,
     "vues": {"D": True, "W": True},
     "pivot": {
@@ -173,11 +176,21 @@ def charger_tickers():
 
 # ─── Données & indicateurs ────────────────────────────────────────────────────
 
-def telecharger(ticker, periode):
+def telecharger(ticker, periode, ajuster_dividendes=False):
     """Télécharge l'historique journalier. Retourne None si indisponible."""
     try:
+        # Prix BRUTS, ajustés des splits mais pas des dividendes — exactement
+        # ce qu'affichent les plateformes de graphiques.
+        #
+        # L'ajustement des dividendes abaisse rétroactivement les prix anciens.
+        # Comparer deux pivots distants revient alors à comparer des échelles
+        # différentes : sur TotalEnergies, un sommet de septembre 0,12 % SOUS
+        # celui de mars devenait 1,54 % AU-DESSUS une fois ajusté. Le biais a
+        # un sens — il fabrique de fausses divergences baissières et masque de
+        # vraies divergences haussières — et il grandit avec la portée de la
+        # figure et le rendement du titre.
         df = yf.download(ticker, period=periode, interval="1d",
-                         progress=False, auto_adjust=True)
+                         progress=False, auto_adjust=ajuster_dividendes)
     except Exception as e:
         print(f"  ✗ {ticker} — erreur téléchargement : {e}")
         return None
@@ -504,7 +517,8 @@ def dedupliquer(candidats, params, largeur_pivot):
 
 def analyser_ticker(ticker, params, vues):
     """Scanne un ticker sur les vues demandées. Retourne (divergences, erreur)."""
-    df = telecharger(ticker, params["periode_historique"])
+    df = telecharger(ticker, params["periode_historique"],
+                     params.get("ajuster_dividendes", False))
     if df is None:
         return [], "téléchargement impossible"
 
