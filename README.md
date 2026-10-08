@@ -10,6 +10,34 @@ python3 RSI_scanner.py --ouvrir
 
 ---
 
+## Sans rien installer : GitHub Actions
+
+Le scanner peut tourner sur les serveurs de GitHub. Rien à installer, rien à
+garder allumé.
+
+**À la demande** — onglet **Actions** du dépôt → **Scan divergences RSI** dans
+la colonne de gauche → bouton **Run workflow**. Au bout d'une dizaine de
+minutes, le rapport HTML est joint à l'exécution, en bas de la page, sous
+**Artifacts**.
+
+**Automatiquement** — le scan part aussi chaque jour de bourse à 20 h 00 UTC.
+Change l'heure dans `.github/workflows/scan.yml`, ligne `cron`.
+
+**Alertes Telegram** — renseigne deux secrets dans *Settings → Secrets and
+variables → Actions → New repository secret* :
+
+| Nom | Valeur |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | ton token BotFather |
+| `TELEGRAM_CHAT_ID` | ton chat_id |
+
+Les alertes partent alors sur ton téléphone sans que tu aies rien à ouvrir. Un
+cache conserve la mémoire des alertes déjà envoyées d'une exécution à l'autre,
+pour ne pas recevoir deux fois la même.
+
+À savoir : GitHub suspend les workflows planifiés après 60 jours sans activité
+sur le dépôt. Un clic sur **Run workflow** les réactive.
+
 ## Installation — Windows (PowerShell)
 
 ```powershell

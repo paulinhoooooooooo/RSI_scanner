@@ -1,0 +1,63 @@
+# Lance le scanner sur les serveurs de GitHub : rien à installer en local.
+#
+#   • À la demande : onglet Actions → « Scan divergences RSI » → Run workflow
+#   • Automatiquement : chaque jour de bourse, à l'heure du cron ci-dessous
+#
+# Le rapport HTML est déposé en pièce jointe de l'exécution, et les alertes
+# partent sur Telegram si les deux secrets du dépôt sont renseignés.
+
+name: Scan divergences RSI
+
+on:
+  workflow_dispatch:          # le bouton « Run workflow »
+  schedule:
+    - cron: "0 20 * * 1-5"    # 20 h 00 UTC, du lundi au vendredi
+
+# Évite deux scans simultanés si on clique pendant qu'un autre tourne.
+concurrency:
+  group: scan-rsi
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      # Chaque exécution part d'une machine neuve : sans ce cache, le fichier
+      # d'état serait perdu et Telegram renverrait les mêmes alertes à chaque
+      # fois. La clé change à chaque exécution pour forcer une sauvegarde, et
+      # restore-keys ramène la plus récente.
+      - name: Restaurer la mémoire des alertes déjà envoyées
+        uses: actions/cache@v4
+        with:
+          path: .divergence_etat.json
+          key: etat-divergences-${{ github.run_id }}
+          restore-keys: etat-divergences-
+
+      - name: Scanner la watchlist
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python RSI_scanner.py
+
+      - name: Déposer le rapport
+        if: always()          # même si le scan a échoué en cours de route
+        uses: actions/upload-artifact@v4
+        with:
+          name: rapport-divergences
+          path: rapports/*.html
+          retention-days: 90
+          if-no-files-found: warn
