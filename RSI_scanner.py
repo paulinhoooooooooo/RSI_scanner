@@ -831,11 +831,20 @@ def issue_divergence(data, d, decalage, horizons, horizon_objectif):
     # ratée : la compter comme ratée fausserait le taux de réalisation.
     tranchee = atteint or borne >= i_e + horizon_objectif
 
+    # Les pivots d'une divergence sont presque de niveau — c'est ce qui la rend
+    # lisible — et les trois bougies de décalage suffisent souvent à franchir
+    # l'objectif avant même d'être entré. Une telle figure n'a plus rien à
+    # offrir : la compter comme atteinte gonfle le taux de réussite sans rien
+    # mesurer. On la marque, et les statistiques l'écartent.
+    ecart = sens * (objectif - prix_e) / prix_e * 100
+    atteignable = ecart > 0
+
     return {
         "date_entree": data.index[i_e],
         "prix_entree": float(prix_e),
         "objectif": float(objectif),
-        "ecart_objectif": sens * (objectif - prix_e) / prix_e * 100,
+        "ecart_objectif": ecart,
+        "atteignable": atteignable,
         "atteint": atteint,
         "delai": delai,
         "tranchee": tranchee,
@@ -1008,7 +1017,9 @@ select{font-family:inherit;font-size:13px;padding:6px 10px;border-radius:7px;bor
 .delais div{flex:1;background:#378add;border-radius:3px 3px 0 0;min-height:2px;position:relative}
 .delais div span{position:absolute;top:-15px;left:0;right:0;text-align:center;font-size:10px;color:#5d5750}
 .delais-leg{display:flex;gap:4px;font-size:10px;color:#8a8378}
-.delais-leg div{flex:1;text-align:center}"""
+.delais-leg div{flex:1;text-align:center}
+.deux-blocs{display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px}
+.deux-blocs table{font-size:12px;margin:0}"""
 
 
 def badge_duree(d):
@@ -1089,6 +1100,12 @@ def section_historique(historique, params, vues):
     délais répond à la deuxième, qui gouverne les deux autres — une figure qui
     met un an à se réaliser n'a pas la même valeur qu'une figure de trois
     semaines, même taux de réussite.
+
+    Les figures dont l'objectif est déjà franchi au moment de l'entrée sont
+    affichées mais exclues des statistiques : les deux pivots d'une divergence
+    étant presque de niveau, le prix les dépasse souvent pendant les bougies
+    de décalage, et les compter comme réussies ferait monter le taux à près de
+    90 % sans rien mesurer.
     """
     cfg = params.get("historique", {})
     deca = cfg.get("decalage_entree", 3)
@@ -1099,37 +1116,44 @@ def section_historique(historique, params, vues):
 
     def stats(lignes):
         """n, % atteint, délai médian, rendement moyen par horizon."""
-        tranchees = [h for h in lignes if h["tranchee"]]
+        utiles = [h for h in lignes if h.get("atteignable", True)]
+        tranchees = [h for h in utiles if h["tranchee"]]
         atteints = [h for h in tranchees if h["atteint"]]
         delais = sorted(h["delai"] for h in atteints)
         med = delais[len(delais) // 2] if delais else None
         rend = {}
         for c in cols:
-            vals = [h["rendements"].get(c) for h in lignes
+            vals = [h["rendements"].get(c) for h in utiles
                     if h["rendements"].get(c) is not None]
             rend[c] = sum(vals) / len(vals) if vals else None
-        return len(lignes), len(tranchees), len(atteints), med, rend, delais
+        return len(lignes), len(utiles), len(tranchees), len(atteints), med, rend, delais
 
     def bloc_resume(lignes):
-        n, n_tr, n_at, med, rend, _ = stats(lignes)
+        n, n_u, n_tr, n_at, med, rend, _ = stats(lignes)
         pct = f"{n_at / n_tr * 100:.0f} %" if n_tr else "—"
-        med_txt = f"{med}" if med is not None else "—"
+        med_txt = (f"{med}</b> bougie{'s' if med > 1 else ''}"
+                   if med is not None else "—</b> bougie")
         parts = " &middot; ".join(
             f"+{c} : <b>{rend[c]:+.1f} %</b>" if rend[c] is not None else f"+{c} : —"
             for c in cols)
-        return (f"<b>{n}</b> figures &middot; objectif atteint <b>{pct}</b> "
-                f"&middot; délai médian <b>{med_txt}</b> bougies<br>"
+        ecarte = (f" <span style='color:#8a8378'>({n - n_u} écartées, objectif déjà "
+                  f"franchi)</span>" if n_u < n else "")
+        return (f"<b>{n_u}</b> figures mesurables{ecarte} &middot; objectif atteint "
+                f"<b>{pct}</b> &middot; délai médian <b>{med_txt}<br>"
                 f"<span style='color:#8a8378'>rendement moyen — {parts}</span>")
 
     def histogramme(lignes):
         """Répartition du délai de réalisation, en cinq tranches."""
-        _, n_tr, n_at, _, _, delais = stats(lignes)
+        _, _, n_tr, n_at, _, _, delais = stats(lignes)
         bornes = [(0, 5), (6, 10), (11, 20), (21, 40), (41, 10 ** 6)]
         libelles = ["1-5", "6-10", "11-20", "21-40", "41+"]
         comptes = [sum(1 for d in delais if a <= d <= b) for a, b in bornes]
         comptes.append(n_tr - n_at)          # jamais atteint
         libelles.append("jamais")
-        total = max(1, sum(comptes))
+        # Mise à l'échelle sur la barre la plus haute, pas sur le total : c'est
+        # la forme de la distribution qui répond à « quand », et la rapporter
+        # au total l'aplatit jusqu'à la rendre illisible.
+        total = max(1, max(comptes))
         barres = "".join(
             f'<div style="height:{c / total * 100:.0f}%;'
             f'{"background:#c9c4bb" if i == 5 else ""}"><span>{c or ""}</span></div>'
@@ -1137,6 +1161,36 @@ def section_historique(historique, params, vues):
         legende = "".join(f"<div>{l}</div>" for l in libelles)
         return f'<div class="delais">{barres}</div><div class="delais-leg">{legende}</div>'
 
+    def bloc_ambition(lignes):
+        """
+        Taux de réussite selon la distance de l'objectif.
+
+        Un objectif à 1 % est touché par le bruit ; à 10 % il demande un vrai
+        mouvement. Lire les deux colonnes ensemble dit ce que la figure peut
+        raisonnablement viser, et au bout de combien de temps.
+        """
+        utiles = [h for h in lignes if h.get("atteignable", True)]
+        rangs = [(0.0, "tous"), (1.0, "&gt; 1 %"), (3.0, "&gt; 3 %"),
+                 (5.0, "&gt; 5 %"), (10.0, "&gt; 10 %")]
+        corps = ""
+        for seuil, lib in rangs:
+            s = [h for h in utiles if h["ecart_objectif"] > seuil]
+            tr = [h for h in s if h["tranchee"]]
+            at = [h for h in tr if h["atteint"]]
+            if not tr:
+                continue
+            d = sorted(h["delai"] for h in at)
+            med = d[len(d) // 2] if d else None
+            corps += (f"<tr><td>{lib}</td><td>{len(s)}</td>"
+                      f"<td><span class='badge "
+                      f"{'bg' if len(at) / len(tr) >= 0.5 else 'bn'}'>"
+                      f"{len(at) / len(tr) * 100:.0f} %</span></td>"
+                      f"<td>{med if med is not None else '—'}</td></tr>")
+        return ("<table><thead><tr><th>Objectif à</th><th>Figures</th>"
+                "<th>Atteint</th><th>Délai médian</th></tr></thead>"
+                f"<tbody>{corps}</tbody></table>")
+
+    n_u = sum(1 for h in historique if h.get("atteignable", True))
     out = ['<div class="section-title">Historique des divergences — '
            f'{len(historique)} figures</div>']
     out.append(
@@ -1146,24 +1200,37 @@ def section_historique(historique, params, vues):
         'Le rendement est compté dans le sens de la figure — une baissière gagne quand le '
         'prix descend — et relevé à plusieurs échéances, pour voir <b>à quel moment</b> '
         'elle paie. L\'histogramme donne la répartition des délais de réalisation : '
-        'c\'est lui qui dit quand la divergence se valide le plus souvent.</p>')
+        'c\'est lui qui dit quand la divergence se valide le plus souvent.<br>'
+        f'Les <b>{len(historique) - n_u}</b> figures dont l\'objectif était déjà franchi '
+        f'après les {deca} bougies de décalage restent dans le tableau, marquées '
+        '<span class="badge bo">déjà franchi</span>, mais sont exclues des statistiques : '
+        'les deux pivots d\'une divergence sont presque de niveau, le prix les dépasse '
+        'donc souvent tout seul, et les compter comme réussies gonflerait le taux sans '
+        'rien mesurer.</p>')
 
     out.append('<div class="barre-outils">')
     out.append('<label for="selTicker" style="font-size:13px;color:#5d5750">Entreprise</label>')
     out.append('<select id="selTicker" onchange="filtrerHistorique()">')
     out.append(f'<option value="*">Toutes — {len(historique)} figures</option>')
     for tk in tickers:
-        n, n_tr, n_at, med, _, _ = stats([h for h in historique if h["ticker"] == tk])
+        _, n_u, n_tr, n_at, med, _, _ = stats([h for h in historique
+                                               if h["ticker"] == tk])
         pct = f"{n_at / n_tr * 100:.0f} %" if n_tr else "—"
-        out.append(f'<option value="{tk}">{tk} — {n} figures, {pct} atteintes</option>')
+        out.append(f'<option value="{tk}">{tk} — {n_u} mesurables, {pct} atteintes</option>')
     out.append('</select>')
     out.append(f'<span class="resume" id="resumeHist">{bloc_resume(historique)}</span>')
     out.append('</div>')
 
-    out.append('<div style="max-width:420px;margin-bottom:14px">'
+    out.append('<div class="deux-blocs">')
+    out.append('<div style="flex:1 1 320px;max-width:420px">'
                '<div style="font-size:12px;color:#5d5750;margin-bottom:16px">'
                'Délai de réalisation (bougies)</div>'
                f'<div id="histoHist">{histogramme(historique)}</div></div>')
+    out.append('<div style="flex:1 1 320px;max-width:420px">'
+               '<div style="font-size:12px;color:#5d5750;margin-bottom:6px">'
+               'Réussite selon l\'ambition de l\'objectif</div>'
+               f'<div id="ambiHist">{bloc_ambition(historique)}</div></div>')
+    out.append('</div>')
 
     entetes = "".join(f"<th>+{c}</th>" for c in cols)
     out.append('<div class="table-wrap"><table><thead><tr>'
@@ -1175,13 +1242,19 @@ def section_historique(historique, params, vues):
     for h in sorted(historique, key=lambda x: (x["ticker"], x["date_b"])):
         meta = TYPES_META[h["type"]]
         cls = "hauss" if meta["biais"] == "haussier" else "baiss"
-        if not h["tranchee"]:
+        if not h.get("atteignable", True):
+            att = '<span class="badge bo">déjà franchi</span>'
+        elif not h["tranchee"]:
             att = '<span class="badge bo">en cours</span>'
         elif h["atteint"]:
             att = '<span class="badge bg">oui</span>'
         else:
             att = '<span class="badge bn">non</span>'
         unite = VUES_META[h["vue"]]["unite"]
+        # Un objectif déjà franchi est touché à la première bougie par
+        # construction : afficher ce « 1 » laisserait croire à un délai mesuré.
+        delai_txt = (h["delai"] if h["delai"] is not None
+                     and h.get("atteignable", True) else "—")
         cells = ""
         for c in horizons.get(h["vue"], cols):
             v = h["rendements"].get(c)
@@ -1201,17 +1274,20 @@ def section_historique(historique, params, vues):
             f'<td>{h["objectif"]:.2f}</td>'
             f'<td>{h["ecart_objectif"]:+.1f} %</td>'
             f'<td>{att}</td>'
-            f'<td>{h["delai"] if h["delai"] is not None else "—"}</td>'
+            f'<td>{delai_txt}</td>'
             f'{cells}'
             f'<td><span class="badge bn">{h["pire"]:+.1f} %</span></td></tr>')
     out.append('</tbody></table></div>')
 
     # Résumés et histogrammes pré-calculés : le filtre ne fait que masquer des
     # lignes et recopier le bloc correspondant, sans recalcul côté navigateur.
-    donnees = {"*": {"resume": bloc_resume(historique), "histo": histogramme(historique)}}
+    def paquet(lignes):
+        return {"resume": bloc_resume(lignes), "histo": histogramme(lignes),
+                "ambi": bloc_ambition(lignes)}
+
+    donnees = {"*": paquet(historique)}
     for tk in tickers:
-        lignes = [h for h in historique if h["ticker"] == tk]
-        donnees[tk] = {"resume": bloc_resume(lignes), "histo": histogramme(lignes)}
+        donnees[tk] = paquet([h for h in historique if h["ticker"] == tk])
 
     out.append("<script>const HIST = " + json.dumps(donnees, ensure_ascii=False) + ";")
     out.append("function filtrerHistorique() {"
@@ -1223,6 +1299,7 @@ def section_historique(historique, params, vues):
                "  if (d) {"
                "    document.getElementById('resumeHist').innerHTML = d.resume;"
                "    document.getElementById('histoHist').innerHTML = d.histo;"
+               "    document.getElementById('ambiHist').innerHTML = d.ambi;"
                "  }"
                "}</script>")
     return "\n".join(out)
