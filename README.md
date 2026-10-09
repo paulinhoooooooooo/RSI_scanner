@@ -10,7 +10,27 @@ python3 RSI_scanner.py --ouvrir
 
 ---
 
-## Sans rien installer : GitHub Actions
+## En une commande, sans rien installer
+
+Si Python est déjà sur la machine — c'est le cas dès qu'un autre script du
+projet y a tourné — le programme se suffit à lui-même. Dans l'invite de
+commandes Windows :
+
+```
+curl -o RSI_scanner.py https://raw.githubusercontent.com/paulinhoooooooooo/RSI_scanner/main/RSI_scanner.py
+```
+```
+python RSI_scanner.py --ouvrir
+```
+
+`curl` est fourni avec Windows 10 et 11, rien à installer. Le rapport s'ouvre
+tout seul dans le navigateur à la fin du scan.
+
+Le programme n'a besoin d'aucun fichier d'accompagnement : sans `config.json`
+il tourne sur ses valeurs par défaut, et il crée `tickers.txt` au premier
+lancement avec la watchlist intégrée — libre à toi de l'éditer ensuite.
+
+## Sans aucun ordinateur : GitHub Actions
 
 Le scanner peut tourner sur les serveurs de GitHub. Rien à installer, rien à
 garder allumé.

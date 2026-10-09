@@ -144,6 +144,190 @@ VUES_META = {
 }
 
 
+# Watchlist écrite dans tickers.txt au premier lancement, si le fichier
+# n'existe pas encore.
+WATCHLIST_PAR_DEFAUT = """# Liste des tickers à surveiller
+# Un ticker par ligne
+# Suffixe .PA pour Euronext Paris (ex: MC.PA), .DE pour Francfort,
+# .MC pour Madrid, .MI pour Milan, .L pour Londres, .SW pour Zurich
+# Pas de suffixe pour les actions US (AAPL, TSLA...)
+# Préfixe ^ pour les indices (^GSPC, ^FCHI...)
+# Les lignes commençant par # sont ignorées
+
+
+# ═══════════════════════════════════════════════════════════
+#  LISTE D'ORIGINE
+# ═══════════════════════════════════════════════════════════
+
+# --- CAC 40 ---
+SAN.PA
+
+# --- US Tech ---
+AAPL
+MSFT
+NVDA
+GOOGL
+META
+TSLA
+AMZN
+QQQ
+^GSPC
+
+# --- Santé ---
+JNJ
+AMGN
+LLY
+UNH
+MRK
+SAN
+ABBV
+HON
+IPN
+MRNA
+
+# --- Or ---
+GOLD
+
+
+# ═══════════════════════════════════════════════════════════
+#  COMPLÉMENT — 50 valeurs, secteurs et zones diversifiés
+# ═══════════════════════════════════════════════════════════
+
+# --- Technologie & semi-conducteurs (8) ---
+AMD
+AVGO
+ASML
+TSM
+ORCL
+CRM
+ADBE
+QCOM
+
+# --- Finance & paiements (6) ---
+JPM
+GS
+V
+MA
+BNP.PA
+ALV.DE
+
+# --- Santé & équipement médical (5) ---
+PFE
+NVO
+TMO
+MDT
+ISRG
+
+# --- Énergie (4) ---
+XOM
+CVX
+TTE.PA
+SHEL
+
+# --- Industrie & aéronautique (5) ---
+CAT
+GE
+AIR.PA
+SIE.DE
+RTX
+
+# --- Consommation de base (5) ---
+KO
+PEP
+PG
+WMT
+COST
+
+# --- Consommation discrétionnaire & luxe (5) ---
+MCD
+NKE
+HD
+MC.PA
+RMS.PA
+
+# --- Communication & médias (3) ---
+NFLX
+DIS
+CMCSA
+
+# --- Immobilier coté (2) ---
+AMT
+PLD
+
+# --- Services aux collectivités (2) ---
+NEE
+IBE.MC
+
+# --- Matériaux & mines (3) ---
+LIN
+BHP
+RIO
+
+# --- Indices & ETF (2) ---
+IWM
+^FCHI
+
+
+# ═══════════════════════════════════════════════════════════
+#  COMPLÉMENT — 30 valeurs CYCLIQUES
+#  Sensibles au cycle économique : elles amplifient les
+#  retournements, donc les divergences y sont plus marquées.
+# ═══════════════════════════════════════════════════════════
+
+# --- Automobile (4) ---
+F
+GM
+STLA
+VOW3.DE
+
+# --- Transport aérien (3) ---
+DAL
+UAL
+AF.PA
+
+# --- Voyage, hôtellerie & loisirs (4) ---
+CCL
+RCL
+BKNG
+MAR
+
+# --- Construction & habitat (3) ---
+DHI
+LEN
+SGO.PA
+
+# --- Chimie (3) ---
+DOW
+LYB
+BAS.DE
+
+# --- Acier, aluminium & métaux (4) ---
+NUE
+FCX
+MT
+AA
+
+# --- Machines & équipement lourd (3) ---
+DE
+CMI
+URI
+
+# --- Équipement semi-conducteurs (2) ---
+AMAT
+LRCX
+
+# --- Logistique (1) ---
+FDX
+
+# --- Distribution discrétionnaire (2) ---
+TGT
+LOW
+
+# --- Services pétroliers (1) ---
+SLB
+"""
+
+
 # ─── Config & watchlist ───────────────────────────────────────────────────────
 
 def fusionner(defaut, perso):
@@ -158,13 +342,32 @@ def fusionner(defaut, perso):
 
 
 def charger_config():
-    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-        config = json.load(f)
+    """
+    Lit config.json s'il existe, sinon tourne sur les valeurs par défaut.
+
+    Le programme doit pouvoir s'exécuter seul, posé n'importe où, sans aucun
+    fichier d'accompagnement : sans config.json il scanne quand même, il
+    n'enverra simplement pas d'alerte Telegram faute d'identifiants.
+    """
+    config = {}
+    if CONFIG_FILE.exists():
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    config.setdefault("telegram", {})
     config["divergence"] = fusionner(DEFAUTS, config.get("divergence"))
     return config
 
 
 def charger_tickers():
+    """
+    Lit tickers.txt, et le crée à partir de la liste intégrée s'il manque.
+
+    Écrire le fichier plutôt que garder la liste en mémoire laisse une
+    watchlist modifiable là où le programme a été lancé.
+    """
+    if not TICKERS_FILE.exists():
+        TICKERS_FILE.write_text(WATCHLIST_PAR_DEFAUT, encoding="utf-8")
+        print(f"tickers.txt créé avec la watchlist par défaut — {TICKERS_FILE}")
     tickers = []
     with open(TICKERS_FILE, "r", encoding="utf-8") as f:
         for ligne in f:
