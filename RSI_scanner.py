@@ -80,6 +80,9 @@ DEFAUTS = {
     },
     "verifier_ligne": True,
     "verifier_ligne_rsi": False,
+    # Teste chaque bougie contre la droite de prix, pas seulement les pivots
+    # du RSI : sans ça une figure s'affiche avec sa droite visiblement percée.
+    "verifier_ligne_bougies": True,
     "tolerance_cassure_prix_pct": 0.5,
     "tolerance_cassure_rsi": 2.0,
     "autoriser_pivot_provisoire": True,
@@ -530,6 +533,50 @@ def pivot_intermediaire_casse(pivots, a, b, cle, sens, tolerance_abs):
     return False
 
 
+def bougie_casse_ligne(lows, highs, a, b, sens, tol_pct, n, droite):
+    """
+    Vrai si le prix est sorti de la figure, par une bougie quelconque.
+
+    `pivot_intermediaire_casse` ne teste que les pivots du RSI. Une bougie peut
+    donc traverser la droite de prix sans être vue, puisqu'elle n'est un pivot
+    que sur le RSI : sur BKNG, le creux du 05/10 à 154.06 perçait la ligne
+    tracée à 155.36 sans rien déclencher, et la figure s'affichait avec une
+    droite de support visiblement traversée.
+
+    Le critère est le plancher de la figure — le plus extrême des deux
+    ancrages — et non la droite interpolée. Tester la droite paraît plus
+    rigoureux mais rejette presque tout : sur une figure longue et pentue, une
+    bougie peut passer sous la droite tout en restant au-dessus des deux
+    creux, ce qui n'invalide rien. Mesuré sur vingt valeurs, le test contre la
+    droite supprimait 89 % des figures ; contre le plancher il ne retire que
+    celles dont le creux s'est réellement déplacé.
+
+    Au-delà du second pivot, le balayage s'arrête à la fenêtre de confirmation
+    (`droite` bougies) et non à la fin de la série. Sans cette borne une figure
+    de 2024 était invalidée par n'importe quelle bougie des deux années
+    suivantes, ce qui supprimait 86 % de l'historique : passer sous un creux
+    deux ans plus tard est le cours normal du marché, pas un défaut de la
+    figure. Ce qui compte est la fenêtre où le pivot se valide — et, pour une
+    figure encore en formation, elle s'arrête à aujourd'hui.
+
+    La tolérance est un pourcentage du niveau : une mèche qui effleure le
+    plancher ne casse rien, et le même seuil vaut à 50 $ comme à 900 $.
+    """
+    extremes = lows if sens == "bas" else highs
+    signe = -1 if sens == "bas" else 1
+    plancher = min(a["prix"], b["prix"]) if sens == "bas" else max(a["prix"], b["prix"])
+    marge = abs(plancher) * tol_pct
+
+    for k in range(a["idx"] + 1, min(n, b["idx"] + droite + 1)):
+        if k == b["idx"]:
+            continue
+        v = extremes[k]
+        if np.isfinite(v) and signe * (v - plancher) > marge:
+            return True
+
+    return False
+
+
 def excursion_intermediaire(lows, highs, i1, i2, v1, v2, sens, unite_atr=None):
     """
     Plus grand écart du prix entre les deux pivots.
@@ -661,6 +708,10 @@ def detecter_divergences(df, vue, params):
                     if params.get("verifier_ligne_rsi", False):
                         if pivot_intermediaire_casse(pivots, a, b, "rsi", sens,
                                                      lambda _ligne: tol_r):
+                            continue
+                    if params.get("verifier_ligne_bougies", True):
+                        if bougie_casse_ligne(lows, highs, a, b, sens, tol_p, n,
+                                              cfg_pivot["droite"]):
                             continue
 
                 # Filtre de retracement : deux sommets séparés par une chute

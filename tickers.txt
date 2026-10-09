@@ -220,3 +220,107 @@ DKNG
 ENPH
 FSLR
 ARKK
+
+
+# ═══════════════════════════════════════════════════════════
+#  COMPLÉMENT — 71 valeurs demandées le 09/10/2026
+#  Crypto, semi-conducteurs, logiciel à forte croissance,
+#  nucléaire & électrification, biotech, défense européenne.
+# ═══════════════════════════════════════════════════════════
+
+# --- Crypto & fintech (4) ---
+CRCL
+XYZ
+TOST
+FUTU
+
+# --- Semi-conducteurs & mémoire (14) ---
+MU
+MRVL
+ALAB
+CRDO
+WDC
+STX
+INTC
+ON
+LSCC
+TER
+GFS
+COHR
+LITE
+STM
+
+# --- Infrastructure IA & centres de données (4) ---
+CRWV
+NBIS
+VRT
+CEG
+
+# --- Logiciel & plateformes (14) ---
+SNOW
+DDOG
+CRWD
+NET
+MDB
+SHOP
+APP
+DUOL
+RDDT
+ZS
+DASH
+SPOT
+TTD
+CPNG
+
+# --- Véhicules électriques & mobilité aérienne (4) ---
+XPEV
+LI
+JOBY
+ACHR
+
+# --- Chine cotée aux États-Unis (4) ---
+BABA
+PDD
+JD
+BIDU
+
+# --- Nucléaire & uranium (5) ---
+VST
+OKLO
+SMR
+CCJ
+UEC
+
+# --- Énergie propre (1) ---
+BE
+
+# --- Biotech & santé (7) ---
+SMMT
+INSM
+HIMS
+BNTX
+SRPT
+TEM
+VKTX
+
+# --- Consommation & loisirs (4) ---
+LULU
+CELH
+WYNN
+ABNB
+
+# --- Mines & matériaux critiques (3) ---
+ALB
+MP
+HL
+
+# --- Espace & défense (6) ---
+RKLB
+ASTS
+KTOS
+RHM.DE
+ENR.DE
+IFX.DE
+
+# --- Paiements européens (1) ---
+ADYEN.AS
