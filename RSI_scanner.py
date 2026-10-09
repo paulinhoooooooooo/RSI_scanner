@@ -96,6 +96,23 @@ DEFAUTS = {
     "prioritaire": {
         "rsi_delta_fort": 10.0,
     },
+    # Historique : que valait la figure, une fois jouée ?
+    # L'objectif est le niveau de prix du PREMIER pivot — celui d'où la
+    # divergence est partie. L'atteindre signifie que le mouvement annoncé
+    # a eu lieu ; le prix y revient et la figure est consommée.
+    "historique": {
+        "actif": True,
+        # Bougies entre le signal et l'entrée : le temps que la figure soit
+        # lisible. Mesurer depuis le pivot lui-même supposerait de l'avoir vu
+        # au moment précis où il se formait.
+        "decalage_entree": 3,
+        # Rendements relevés à plusieurs échéances après l'entrée, pour voir
+        # à quel moment la figure paie — ou cesse de payer.
+        "horizons": {"D": [5, 10, 20, 40, 60], "W": [2, 4, 8, 13, 26]},
+        # Au-delà, l'objectif est réputé manqué.
+        "horizon_objectif": {"D": 120, "W": 52},
+        "max_par_type": 40,
+    },
     "telegram": {
         "actif": True,
         "fraicheur_max_bougies": {"D": 10, "W": 4},
@@ -723,9 +740,9 @@ def analyser_ticker(ticker, params, vues):
     df = telecharger(ticker, params["periode_historique"],
                      params.get("ajuster_dividendes", False))
     if df is None:
-        return [], "téléchargement impossible"
+        return [], [], "téléchargement impossible"
 
-    resultats = []
+    resultats, historique = [], []
     for vue in vues:
         data = df if vue == "D" else en_hebdomadaire(df)
         mini = params["rsi_periode"] + params["pivot"][vue]["gauche"] + params["ecart_bougies"][vue]["min"] + 5
@@ -741,7 +758,90 @@ def analyser_ticker(ticker, params, vues):
             d["rsi_actuel"] = float(rsi_serie.iloc[-1])
             d["svg"] = rendre_svg(data, rsi_serie, d)
             resultats.append(d)
-    return resultats, None
+
+        # Historique : on rejoue la détection sans le plafond de déduplication,
+        # qui ne garde que les figures les plus récentes et suffit au rapport
+        # du jour mais tronquerait l'historique.
+        cfg_h = params.get("historique", {})
+        if cfg_h.get("actif", True):
+            p_hist = fusionner(params, {"max_par_type": cfg_h.get("max_par_type", 40)})
+            toutes, _ = detecter_divergences(data, vue, p_hist)
+            for d in toutes:
+                issue = issue_divergence(
+                    data, d, cfg_h.get("decalage_entree", 3),
+                    cfg_h.get("horizons", {}).get(vue, [5, 10, 20]),
+                    cfg_h.get("horizon_objectif", {}).get(vue, 120))
+                if issue is None:
+                    continue
+                historique.append({**{k: d[k] for k in
+                                      ("vue", "type", "span", "delta_rsi", "date_a",
+                                       "date_b", "prix_a", "prix_b", "rsi_a", "rsi_b")},
+                                   "ticker": ticker, **issue})
+    return resultats, historique, None
+
+
+def issue_divergence(data, d, decalage, horizons, horizon_objectif):
+    """
+    Ce qu'a donné la figure, et à quel rythme.
+
+    L'entrée est prise `decalage` bougies après le second pivot, le temps que
+    la figure soit lisible. L'objectif est le niveau du PREMIER pivot : pour
+    une divergence baissière il est sous le prix d'entrée, pour une haussière
+    au-dessus, et le prix qui y revient signe la réalisation de la figure.
+
+    Le rendement est compté dans le sens de la figure — une baissière gagne
+    quand le prix descend — et relevé à chaque échéance de `horizons`, afin de
+    voir à quel moment la figure paie plutôt que de la juger sur un seul
+    instantané.
+    """
+    highs = data["High"].astype(float).to_numpy()
+    lows = data["Low"].astype(float).to_numpy()
+    clos = data["Close"].astype(float).to_numpy()
+    n = len(data)
+
+    i_e = d["idx_b"] + decalage
+    if i_e >= n - 1:
+        return None
+    prix_e = clos[i_e]
+    if not np.isfinite(prix_e) or prix_e <= 0:
+        return None
+
+    haussier = TYPES_META[d["type"]]["biais"] == "haussier"
+    sens = 1 if haussier else -1
+    objectif = d["prix_a"]
+
+    # Rendement directionnel à chaque échéance ; None si l'historique s'arrête
+    # avant, pour ne pas confondre « pas encore mesurable » et « nul ».
+    rendements = {}
+    for h in horizons:
+        k = i_e + h
+        rendements[h] = (sens * (clos[k] - prix_e) / prix_e * 100) if k < n else None
+
+    # Première bougie qui touche l'objectif, et pire excursion d'ici là.
+    borne = min(n - 1, i_e + horizon_objectif)
+    atteint, delai, pire = False, None, 0.0
+    for k in range(i_e + 1, borne + 1):
+        contre = (lows[k] - prix_e) if haussier else (prix_e - highs[k])
+        pire = min(pire, contre / prix_e * 100)
+        if (haussier and highs[k] >= objectif) or (not haussier and lows[k] <= objectif):
+            atteint, delai = True, k - i_e
+            break
+
+    # Une figure dont la fenêtre n'est pas encore écoulée n'est ni réussie ni
+    # ratée : la compter comme ratée fausserait le taux de réalisation.
+    tranchee = atteint or borne >= i_e + horizon_objectif
+
+    return {
+        "date_entree": data.index[i_e],
+        "prix_entree": float(prix_e),
+        "objectif": float(objectif),
+        "ecart_objectif": sens * (objectif - prix_e) / prix_e * 100,
+        "atteint": atteint,
+        "delai": delai,
+        "tranchee": tranchee,
+        "rendements": rendements,
+        "pire": float(pire),
+    }
 
 
 # ─── Mini-graphique SVG ───────────────────────────────────────────────────────
@@ -899,7 +999,16 @@ tbody tr.baiss{border-left:3px solid #a32d2d}
 .vide{background:#fff;border:0.5px solid #e0ddd6;border-radius:10px;padding:2rem;text-align:center;color:#888;font-size:13px}
 .legende{background:#fff;border:0.5px solid #e0ddd6;border-radius:10px;padding:14px 18px;font-size:12px;color:#555;margin-bottom:1.5rem}
 .legende div{margin-bottom:5px}.legende div:last-child{margin-bottom:0}
-.footer{font-size:11px;color:#aaa;margin-top:1.5rem}"""
+.footer{font-size:11px;color:#aaa;margin-top:1.5rem}
+.barre-outils{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+select{font-family:inherit;font-size:13px;padding:6px 10px;border-radius:7px;border:0.5px solid #d6d2ca;background:#fff;color:#1a1a1a;min-width:260px}
+.resume{font-size:12.5px;color:#5d5750;background:#fff;border:0.5px solid #e0ddd6;border-radius:8px;padding:9px 13px}
+.resume b{color:#1a1a1a;font-size:13px}
+.delais{display:flex;gap:4px;align-items:flex-end;height:64px;margin:4px 0 2px}
+.delais div{flex:1;background:#378add;border-radius:3px 3px 0 0;min-height:2px;position:relative}
+.delais div span{position:absolute;top:-15px;left:0;right:0;text-align:center;font-size:10px;color:#5d5750}
+.delais-leg{display:flex;gap:4px;font-size:10px;color:#8a8378}
+.delais-leg div{flex:1;text-align:center}"""
 
 
 def badge_duree(d):
@@ -971,8 +1080,157 @@ def tableau_html(liste, seuil_fort=None):
     return "".join(lignes)
 
 
+def section_historique(historique, params, vues):
+    """
+    Historique des figures passées, filtrable par entreprise.
+
+    Trois questions, dans cet ordre : la figure atteint-elle son objectif, en
+    combien de temps, et que rapporte-t-elle en chemin. L'histogramme des
+    délais répond à la deuxième, qui gouverne les deux autres — une figure qui
+    met un an à se réaliser n'a pas la même valeur qu'une figure de trois
+    semaines, même taux de réussite.
+    """
+    cfg = params.get("historique", {})
+    deca = cfg.get("decalage_entree", 3)
+    horizons = cfg.get("horizons", {})
+    tickers = sorted({h["ticker"] for h in historique})
+    vue_ref = "D" if "D" in vues else vues[0]
+    cols = horizons.get(vue_ref, [5, 10, 20])
+
+    def stats(lignes):
+        """n, % atteint, délai médian, rendement moyen par horizon."""
+        tranchees = [h for h in lignes if h["tranchee"]]
+        atteints = [h for h in tranchees if h["atteint"]]
+        delais = sorted(h["delai"] for h in atteints)
+        med = delais[len(delais) // 2] if delais else None
+        rend = {}
+        for c in cols:
+            vals = [h["rendements"].get(c) for h in lignes
+                    if h["rendements"].get(c) is not None]
+            rend[c] = sum(vals) / len(vals) if vals else None
+        return len(lignes), len(tranchees), len(atteints), med, rend, delais
+
+    def bloc_resume(lignes):
+        n, n_tr, n_at, med, rend, _ = stats(lignes)
+        pct = f"{n_at / n_tr * 100:.0f} %" if n_tr else "—"
+        med_txt = f"{med}" if med is not None else "—"
+        parts = " &middot; ".join(
+            f"+{c} : <b>{rend[c]:+.1f} %</b>" if rend[c] is not None else f"+{c} : —"
+            for c in cols)
+        return (f"<b>{n}</b> figures &middot; objectif atteint <b>{pct}</b> "
+                f"&middot; délai médian <b>{med_txt}</b> bougies<br>"
+                f"<span style='color:#8a8378'>rendement moyen — {parts}</span>")
+
+    def histogramme(lignes):
+        """Répartition du délai de réalisation, en cinq tranches."""
+        _, n_tr, n_at, _, _, delais = stats(lignes)
+        bornes = [(0, 5), (6, 10), (11, 20), (21, 40), (41, 10 ** 6)]
+        libelles = ["1-5", "6-10", "11-20", "21-40", "41+"]
+        comptes = [sum(1 for d in delais if a <= d <= b) for a, b in bornes]
+        comptes.append(n_tr - n_at)          # jamais atteint
+        libelles.append("jamais")
+        total = max(1, sum(comptes))
+        barres = "".join(
+            f'<div style="height:{c / total * 100:.0f}%;'
+            f'{"background:#c9c4bb" if i == 5 else ""}"><span>{c or ""}</span></div>'
+            for i, c in enumerate(comptes))
+        legende = "".join(f"<div>{l}</div>" for l in libelles)
+        return f'<div class="delais">{barres}</div><div class="delais-leg">{legende}</div>'
+
+    out = ['<div class="section-title">Historique des divergences — '
+           f'{len(historique)} figures</div>']
+    out.append(
+        '<p class="note">Pour chaque figure passée, l\'objectif est le niveau de prix du '
+        '<b>premier pivot</b> : la figure est réalisée quand le prix y revient. '
+        f'L\'entrée est prise <b>{deca} bougies après</b> le signal. '
+        'Le rendement est compté dans le sens de la figure — une baissière gagne quand le '
+        'prix descend — et relevé à plusieurs échéances, pour voir <b>à quel moment</b> '
+        'elle paie. L\'histogramme donne la répartition des délais de réalisation : '
+        'c\'est lui qui dit quand la divergence se valide le plus souvent.</p>')
+
+    out.append('<div class="barre-outils">')
+    out.append('<label for="selTicker" style="font-size:13px;color:#5d5750">Entreprise</label>')
+    out.append('<select id="selTicker" onchange="filtrerHistorique()">')
+    out.append(f'<option value="*">Toutes — {len(historique)} figures</option>')
+    for tk in tickers:
+        n, n_tr, n_at, med, _, _ = stats([h for h in historique if h["ticker"] == tk])
+        pct = f"{n_at / n_tr * 100:.0f} %" if n_tr else "—"
+        out.append(f'<option value="{tk}">{tk} — {n} figures, {pct} atteintes</option>')
+    out.append('</select>')
+    out.append(f'<span class="resume" id="resumeHist">{bloc_resume(historique)}</span>')
+    out.append('</div>')
+
+    out.append('<div style="max-width:420px;margin-bottom:14px">'
+               '<div style="font-size:12px;color:#5d5750;margin-bottom:16px">'
+               'Délai de réalisation (bougies)</div>'
+               f'<div id="histoHist">{histogramme(historique)}</div></div>')
+
+    entetes = "".join(f"<th>+{c}</th>" for c in cols)
+    out.append('<div class="table-wrap"><table><thead><tr>'
+               '<th>Ticker</th><th>Vue</th><th>Type</th><th>Signal</th><th>Portée</th>'
+               '<th>Δ RSI</th><th>Entrée</th><th>Objectif</th><th>Écart visé</th>'
+               f'<th>Atteint</th><th>Délai</th>{entetes}<th>Pire moment</th>'
+               '</tr></thead><tbody>')
+
+    for h in sorted(historique, key=lambda x: (x["ticker"], x["date_b"])):
+        meta = TYPES_META[h["type"]]
+        cls = "hauss" if meta["biais"] == "haussier" else "baiss"
+        if not h["tranchee"]:
+            att = '<span class="badge bo">en cours</span>'
+        elif h["atteint"]:
+            att = '<span class="badge bg">oui</span>'
+        else:
+            att = '<span class="badge bn">non</span>'
+        unite = VUES_META[h["vue"]]["unite"]
+        cells = ""
+        for c in horizons.get(h["vue"], cols):
+            v = h["rendements"].get(c)
+            cells += ('<td>—</td>' if v is None else
+                      f'<td><span class="badge {"bg" if v > 0 else "br"}">{v:+.1f}</span></td>')
+        out.append(
+            f'<tr class="{cls}" data-hist-ticker="{h["ticker"]}">'
+            f'<td class="tk">{h["ticker"]}</td>'
+            f'<td><span class="badge vue-{h["vue"]}">{h["vue"]}</span></td>'
+            f'<td>{meta["emoji"]} {meta["court"]}</td>'
+            f'<td>{h["date_b"].strftime("%d/%m/%Y")}</td>'
+            f'<td>{h["span"]} {unite}</td>'
+            f'<td><span class="badge {"bg" if h["delta_rsi"] > 0 else "br"}">'
+            f'{h["delta_rsi"]:+.1f}</span></td>'
+            f'<td>{h["prix_entree"]:.2f}<div class="sub">'
+            f'{h["date_entree"].strftime("%d/%m/%y")}</div></td>'
+            f'<td>{h["objectif"]:.2f}</td>'
+            f'<td>{h["ecart_objectif"]:+.1f} %</td>'
+            f'<td>{att}</td>'
+            f'<td>{h["delai"] if h["delai"] is not None else "—"}</td>'
+            f'{cells}'
+            f'<td><span class="badge bn">{h["pire"]:+.1f} %</span></td></tr>')
+    out.append('</tbody></table></div>')
+
+    # Résumés et histogrammes pré-calculés : le filtre ne fait que masquer des
+    # lignes et recopier le bloc correspondant, sans recalcul côté navigateur.
+    donnees = {"*": {"resume": bloc_resume(historique), "histo": histogramme(historique)}}
+    for tk in tickers:
+        lignes = [h for h in historique if h["ticker"] == tk]
+        donnees[tk] = {"resume": bloc_resume(lignes), "histo": histogramme(lignes)}
+
+    out.append("<script>const HIST = " + json.dumps(donnees, ensure_ascii=False) + ";")
+    out.append("function filtrerHistorique() {"
+               "  const v = document.getElementById('selTicker').value;"
+               "  document.querySelectorAll('[data-hist-ticker]').forEach(function (el) {"
+               "    el.style.display = (v === '*' || el.dataset.histTicker === v) ? '' : 'none';"
+               "  });"
+               "  const d = HIST[v];"
+               "  if (d) {"
+               "    document.getElementById('resumeHist').innerHTML = d.resume;"
+               "    document.getElementById('histoHist').innerHTML = d.histo;"
+               "  }"
+               "}</script>")
+    return "\n".join(out)
+
+
 def generer_html(divergences, tickers, vues, erreurs, params, chemin,
-                 anciennes=0, avec_confirmees=False, confirmees_ecartees=0):
+                 anciennes=0, avec_confirmees=False, confirmees_ecartees=0,
+                 historique=None):
     maintenant = datetime.now()
     r = params.get("retracement", {})
     retr_txt = (f"{r.get('max_atr')} ATR" if r.get("mode") == "atr"
@@ -1056,6 +1314,9 @@ Filtres anti-bruit : écart intermédiaire &le; {retr_txt} (deux pivots séparé
         cle = ((lambda x: (x["fraicheur"], x["ticker"])) if avec_confirmees
                else (lambda x: (-abs(x["delta_rsi"]), x["fraicheur"])))
         html.append(tableau_html(sorted(du_vue, key=cle), seuil_fort))
+
+    if historique:
+        html.append(section_historique(historique, params, vues))
 
     if erreurs:
         html.append('<div class="section-title">Tickers non analysés</div>')
@@ -1190,13 +1451,13 @@ def main():
 
     print(f"=== Scan divergences RSI — {len(tickers)} tickers, vues {'+'.join(vues)} ===")
 
-    divergences, erreurs = [], []
+    divergences, historique, erreurs = [], [], []
     for i, ticker in enumerate(tickers, 1):
         print(f"[{i}/{len(tickers)}] {ticker}...")
         try:
-            trouvees, erreur = analyser_ticker(ticker, params, vues)
+            trouvees, hist, erreur = analyser_ticker(ticker, params, vues)
         except Exception as e:
-            trouvees, erreur = [], f"erreur d'analyse : {e}"
+            trouvees, hist, erreur = [], [], f"erreur d'analyse : {e}"
         if erreur:
             erreurs.append((ticker, erreur))
             continue
@@ -1207,6 +1468,7 @@ def main():
                   f"{d['date_a'].strftime('%d/%m/%y')} → {d['date_b'].strftime('%d/%m/%y')} "
                   f"| RSI {d['delta_rsi']:+.1f}")
         divergences.extend(trouvees)
+        historique.extend(hist)
         time.sleep(0.3)
 
     # ── On écarte l'historique ancien : une divergence vieille de deux ans
@@ -1237,7 +1499,7 @@ def main():
     horodatage = datetime.now().strftime("%Y%m%d_%H%M")
     chemin = Path(args.sortie) if args.sortie else RAPPORTS_DIR / f"divergences_{horodatage}.html"
     generer_html(divergences, tickers, vues, erreurs, params, chemin,
-                 anciennes, args.confirmees, confirmees_ecartees)
+                 anciennes, args.confirmees, confirmees_ecartees, historique)
     print(f"\n📄 Rapport : {chemin}")
     if args.ouvrir:
         webbrowser.open(chemin.resolve().as_uri())

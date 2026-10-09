@@ -177,3 +177,46 @@ LOW
 
 # --- Services pétroliers (1) ---
 SLB
+
+
+# ═══════════════════════════════════════════════════════════
+#  COMPLÉMENT — 26 valeurs TRÈS VOLATILES
+#  Amplitudes de RSI plus larges, donc divergences plus
+#  marquées — mais aussi davantage de faux signaux.
+# ═══════════════════════════════════════════════════════════
+
+# --- Crypto & minage (6) ---
+BTC-USD
+ETH-USD
+COIN
+MSTR
+MARA
+RIOT
+
+# --- Tech à bêta élevé (8) ---
+PLTR
+SMCI
+ARM
+RBLX
+U
+SNAP
+ROKU
+PINS
+
+# --- Fintech (4) ---
+AFRM
+UPST
+SOFI
+HOOD
+
+# --- Véhicules électriques (3) ---
+RIVN
+LCID
+NIO
+
+# --- Divers à forte amplitude (5) ---
+CVNA
+DKNG
+ENPH
+FSLR
+ARKK
