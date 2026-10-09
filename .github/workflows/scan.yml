@@ -3,8 +3,12 @@
 #   • À la demande : onglet Actions → « Scan divergences RSI » → Run workflow
 #   • Automatiquement : chaque jour de bourse, à l'heure du cron ci-dessous
 #
-# Le rapport HTML est déposé en pièce jointe de l'exécution, et les alertes
-# partent sur Telegram si les deux secrets du dépôt sont renseignés.
+# Le rapport est publié sur une page web à adresse fixe, pour être ouvert d'un
+# clic depuis n'importe quel appareil, et déposé aussi en pièce jointe de
+# l'exécution. Les alertes partent sur Telegram si les secrets sont renseignés.
+#
+# La publication exige un réglage unique dans le dépôt :
+#   Settings → Pages → Build and deployment → Source : GitHub Actions
 
 name: Scan divergences RSI
 
@@ -17,6 +21,12 @@ on:
 concurrency:
   group: scan-rsi
   cancel-in-progress: false
+
+# Nécessaire à la publication de la page.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
 
 jobs:
   scan:
@@ -53,7 +63,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python RSI_scanner.py
 
-      - name: Déposer le rapport
+      - name: Déposer le rapport en pièce jointe
         if: always()          # même si le scan a échoué en cours de route
         uses: actions/upload-artifact@v4
         with:
@@ -61,3 +71,27 @@ jobs:
           path: rapports/*.html
           retention-days: 90
           if-no-files-found: warn
+
+      # Le rapport le plus récent devient la page d'accueil du site.
+      - name: Préparer la page
+        run: |
+          mkdir -p site
+          dernier=$(ls -t rapports/*.html | head -1)
+          cp "$dernier" site/index.html
+          echo "page construite à partir de $dernier"
+
+      - name: Téléverser la page
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  publier:
+    needs: scan
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploiement.outputs.page_url }}
+    steps:
+      - name: Mettre la page en ligne
+        id: deploiement
+        uses: actions/deploy-pages@v4

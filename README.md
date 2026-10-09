@@ -15,10 +15,16 @@ python3 RSI_scanner.py --ouvrir
 Le scanner peut tourner sur les serveurs de GitHub. Rien à installer, rien à
 garder allumé.
 
+**Le rapport s'ouvre ici**, toujours à jour, sans téléchargement :
+
+### https://paulinhoooooooooo.github.io/RSI_scanner/
+
+Cette page exige un réglage unique, à faire une seule fois :
+*Settings → Pages → Build and deployment → Source :* **GitHub Actions**.
+
 **À la demande** — onglet **Actions** du dépôt → **Scan divergences RSI** dans
-la colonne de gauche → bouton **Run workflow**. Au bout d'une dizaine de
-minutes, le rapport HTML est joint à l'exécution, en bas de la page, sous
-**Artifacts**.
+la colonne de gauche → bouton **Run workflow**. Le rapport est aussi joint à
+l'exécution, en bas de la page, sous **Artifacts**, pour le garder hors ligne.
 
 **Automatiquement** — le scan part aussi chaque jour de bourse à 20 h 00 UTC.
 Change l'heure dans `.github/workflows/scan.yml`, ligne `cron`.
