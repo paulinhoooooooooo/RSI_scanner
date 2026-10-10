@@ -44,23 +44,31 @@ RAPPORTS_DIR  = BASE_DIR / "rapports"
 
 # Valeurs utilisées si la section "divergence" est absente de config.json
 DEFAUTS = {
-    "periode_historique": "3y",
+    # Profondeur d'historique par vue. La mensuelle a besoin de bien plus
+    # de recul : le RSI consomme déjà 14 mois avant de produire sa première
+    # valeur, et trois ans ne laisseraient qu'une vingtaine de bougies
+    # exploitables. Le téléchargement se fait une fois, sur la plus longue des
+    # périodes demandées, puis chaque vue est tronquée à la sienne.
+    "periode_historique": {"D": "3y", "W": "3y", "M": "20y"},
     # Faux = prix bruts, comme les plateformes de graphiques. Vrai fausse
     # la comparaison entre pivots distants sur les titres à dividende.
     "ajuster_dividendes": False,
     "rsi_periode": 14,
-    "vues": {"D": True, "W": True},
+    "vues": {"D": True, "W": True, "M": True},
     "pivot": {
         "D": {"gauche": 5, "droite": 5},
         "W": {"gauche": 3, "droite": 3},
+        "M": {"gauche": 2, "droite": 2},
     },
     "ecart_bougies": {
         "D": {"min": 5, "max": 160},
         "W": {"min": 4, "max": 60},
+        "M": {"min": 3, "max": 36},
     },
     "seuils_duree": {
         "D": {"courte": 15, "moyenne": 40},
         "W": {"courte": 4, "moyenne": 12},
+        "M": {"courte": 4, "moyenne": 10},
     },
     "rsi_delta_min": 6.0,
     # Écart maximal du prix entre les deux pivots. Mesuré en multiples d'ATR
@@ -77,6 +85,7 @@ DEFAUTS = {
         "mode": "premier_pivot",          # ou "les_deux_pivots"
         "D": {"surachat": 70.0, "survente": 30.0},
         "W": {"surachat": 75.0, "survente": 25.0},
+        "M": {"surachat": 75.0, "survente": 25.0},
     },
     "verifier_ligne": True,
     "verifier_ligne_rsi": False,
@@ -94,10 +103,25 @@ DEFAUTS = {
         "baissiere_cachee": False,
     },
     "rapport": {
-        "fraicheur_max_bougies": {"D": 40, "W": 13},
+        "fraicheur_max_bougies": {"D": 40, "W": 13, "M": 4},
     },
     "prioritaire": {
         "rsi_delta_fort": 10.0,
+    },
+    # Ampleur du mouvement qui PRÉCÈDE la figure : la chute avant une
+    # divergence haussière, la hausse avant une baissière. Une divergence
+    # après une baisse de 40 % n'offre pas le même potentiel qu'un creux pris
+    # dans une tendance plate. `fenetre` est le recul, en bougies, où l'on va
+    # chercher le sommet de départ.
+    "contexte": {
+        "fenetre": {"D": 120, "W": 52, "M": 24},
+        "min_pct": 0.0,                  # 0 = aucun filtre
+        # Zone favorable, mesurée sur l'historique et non choisie a priori.
+        # En vue D, les divergences haussières précédées d'une chute de 35 à
+        # 50 % rendent +9,0 % en médiane à 60 jours, avec 100 % d'objectifs
+        # atteints sur 30 figures. En dessous le mouvement manque d'ampleur ;
+        # au-delà de 50 % la réussite retombe à 68 % — le couteau tombe encore.
+        "zone_favorable": [35.0, 50.0],
     },
     # Historique : que valait la figure, une fois jouée ?
     # L'objectif est le niveau de prix du PREMIER pivot — celui d'où la
@@ -111,14 +135,15 @@ DEFAUTS = {
         "decalage_entree": 3,
         # Rendements relevés à plusieurs échéances après l'entrée, pour voir
         # à quel moment la figure paie — ou cesse de payer.
-        "horizons": {"D": [5, 10, 20, 40, 60], "W": [2, 4, 8, 13, 26]},
+        "horizons": {"D": [5, 10, 20, 40, 60], "W": [2, 4, 8, 13, 26],
+                     "M": [1, 2, 3, 6, 12]},
         # Au-delà, l'objectif est réputé manqué.
-        "horizon_objectif": {"D": 120, "W": 52},
+        "horizon_objectif": {"D": 120, "W": 52, "M": 24},
         "max_par_type": 40,
     },
     "telegram": {
         "actif": True,
-        "fraicheur_max_bougies": {"D": 10, "W": 4},
+        "fraicheur_max_bougies": {"D": 10, "W": 4, "M": 2},
         "confirmees_seulement": False,
     },
 }
@@ -161,6 +186,7 @@ TYPES_META = {
 VUES_META = {
     "D": {"label": "Vue journalière", "court": "D", "unite": "jours"},
     "W": {"label": "Vue hebdomadaire", "court": "W", "unite": "semaines"},
+    "M": {"label": "Vue mensuelle", "court": "M", "unite": "mois"},
 }
 
 
@@ -444,6 +470,41 @@ def en_hebdomadaire(df):
     return hebdo
 
 
+def en_mensuel(df):
+    """
+    Agrège en bougies mensuelles, chacune datée de son PREMIER jour de
+    cotation — même convention que l'hebdomadaire, qui porte la date de son
+    lundi d'ouverture plutôt que celle de sa clôture.
+    """
+    regles = {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
+    if "Volume" in df.columns:
+        regles["Volume"] = "sum"
+    debut = df.index.to_period("M").to_timestamp()
+    mensuel = df.groupby(debut).agg(regles).dropna(subset=["High", "Low", "Close"])
+    mensuel.index.name = df.index.name
+    return mensuel
+
+
+def chute_prealable(highs, lows, idx_a, idx_b, sens, fenetre):
+    """
+    Ampleur du mouvement qui amène la figure, en pourcentage.
+
+    Pour une divergence haussière, c'est la chute depuis le plus haut des
+    `fenetre` bougies précédant le premier pivot jusqu'au creux de la figure.
+    Pour une baissière, la hausse symétrique. C'est le contexte qui donne sa
+    valeur au signal : un creux pris après une baisse de 40 % a bien plus de
+    chemin à reprendre qu'un creux pris dans une tendance plate.
+    """
+    debut = max(0, idx_a - fenetre)
+    if sens == "bas":
+        sommet = np.nanmax(highs[debut:idx_a + 1])
+        creux = np.nanmin(lows[idx_a:idx_b + 1])
+        return float((sommet - creux) / sommet * 100) if sommet > 0 else 0.0
+    creux = np.nanmin(lows[debut:idx_a + 1])
+    sommet = np.nanmax(highs[idx_a:idx_b + 1])
+    return float((sommet - creux) / creux * 100) if creux > 0 else 0.0
+
+
 def calc_atr(df, periode=14):
     """ATR méthode Wilder — sert d'unité de mesure propre à chaque actif."""
     haut, bas, clot = (df[c].astype(float) for c in ("High", "Low", "Close"))
@@ -627,6 +688,9 @@ def detecter_divergences(df, vue, params):
     n        = len(df)
 
     cfg_pivot = params["pivot"][vue]
+    cfg_ctx = params.get("contexte", {})
+    fen_ctx = cfg_ctx.get("fenetre", {}).get(vue, 120)
+    ctx_min = cfg_ctx.get("min_pct", 0.0)
     cfg_ecart = params["ecart_bougies"][vue]
     delta_min = params["rsi_delta_min"]
     cfg_retr  = params.get("retracement", {})
@@ -743,7 +807,16 @@ def detecter_divergences(df, vue, params):
                     if not atteint:
                         continue
 
+                # Contexte : l'ampleur du mouvement qui amène la figure.
+                # Une divergence haussière après une chute de 40 % a bien plus
+                # de chemin à reprendre qu'un creux pris en tendance plate.
+                chute = chute_prealable(highs, lows, a["idx"], b["idx"],
+                                        sens, fen_ctx)
+                if ctx_min and chute < ctx_min:
+                    continue
+
                 candidats.append({
+                    "chute_prealable": round(chute, 1),
                     "retracement_pct": round(profondeur, 1),
                     "retracement_unite": "ATR" if retr_mode == "atr" else "%",
                     "type": type_cle,
@@ -786,16 +859,48 @@ def dedupliquer(candidats, params, largeur_pivot):
     return retenus
 
 
+ANNEES_PERIODE = {"1y": 1, "2y": 2, "3y": 3, "5y": 5, "6mo": 1,
+                  "10y": 10, "15y": 15, "20y": 20, "max": 100}
+
+
+def periodes_par_vue(params, vues):
+    """Profondeur demandée pour chaque vue, qu'elle soit réglée globalement
+    (une chaîne, ancien format) ou vue par vue (un dictionnaire)."""
+    reglage = params.get("periode_historique", "3y")
+    if isinstance(reglage, str):
+        return {v: reglage for v in vues}
+    return {v: reglage.get(v, "3y") for v in vues}
+
+
+def periode_la_plus_longue(periodes):
+    return max(periodes.values(), key=lambda p: ANNEES_PERIODE.get(p, 3))
+
+
+def tronquer(df, periode):
+    """Ramène l'historique journalier à la profondeur voulue."""
+    annees = ANNEES_PERIODE.get(periode, 3)
+    if annees >= 100 or df.empty:
+        return df
+    depuis = df.index[-1] - pd.DateOffset(years=annees)
+    return df[df.index >= depuis]
+
+
 def analyser_ticker(ticker, params, vues):
     """Scanne un ticker sur les vues demandées. Retourne (divergences, erreur)."""
-    df = telecharger(ticker, params["periode_historique"],
+    periodes = periodes_par_vue(params, vues)
+    df = telecharger(ticker, periode_la_plus_longue(periodes),
                      params.get("ajuster_dividendes", False))
     if df is None:
         return [], [], "téléchargement impossible"
 
     resultats, historique = [], []
     for vue in vues:
-        data = df if vue == "D" else en_hebdomadaire(df)
+        # Une seule requête réseau couvre toutes les vues ; chacune est ensuite
+        # ramenée à sa propre profondeur, pour que l'ajout du mensuel n'aille
+        # pas gonfler l'historique du journalier au passage.
+        base = tronquer(df, periodes[vue])
+        data = (base if vue == "D" else
+                en_hebdomadaire(base) if vue == "W" else en_mensuel(base))
         mini = params["rsi_periode"] + params["pivot"][vue]["gauche"] + params["ecart_bougies"][vue]["min"] + 5
         if len(data) < mini:
             print(f"  · {ticker} [{vue}] — historique trop court "
@@ -826,7 +931,8 @@ def analyser_ticker(ticker, params, vues):
                     continue
                 historique.append({**{k: d[k] for k in
                                       ("vue", "type", "span", "delta_rsi", "date_a",
-                                       "date_b", "prix_a", "prix_b", "rsi_a", "rsi_b")},
+                                       "date_b", "prix_a", "prix_b", "rsi_a", "rsi_b",
+                                       "chute_prealable")},
                                    "ticker": ticker, **issue})
     return resultats, historique, None
 
@@ -1090,15 +1196,18 @@ def libelle_fraicheur(d):
     return f'il y a {n} {VUES_META[d["vue"]]["unite"]}'
 
 
-def tableau_html(liste, seuil_fort=None):
+def tableau_html(liste, seuil_fort=None, zone_chute=(35.0, 50.0)):
     """
     Tableau complet pour une liste de divergences.
 
     `seuil_fort` marque d'une étoile les écarts de RSI les plus francs, ceux qui
-    méritent d'être regardés en premier.
+    méritent d'être regardés en premier. `zone_chute` encadre l'ampleur du
+    mouvement préalable qui s'est révélée la plus rentable sur l'historique :
+    au-dessus, la figure est signalée comme excessive plutôt que comme forte.
     """
     lignes = ['<div class="table-wrap"><table><thead><tr>'
               '<th>Ticker</th><th>Vue</th><th>Type</th><th>Portée</th>'
+              '<th>Chute avant</th>'
               '<th>Pivot 1</th><th>Pivot 2</th><th>Prix</th>'
               '<th>RSI</th><th>Δ RSI</th><th>Écart interm.</th>'
               '<th>Aujourd\'hui</th><th>Statut</th><th>Graphique</th>'
@@ -1112,6 +1221,22 @@ def tableau_html(liste, seuil_fort=None):
         statut = ('<span class="badge bg">confirmée</span>' if d["confirmee"]
                   else '<span class="badge bo">en formation</span>')
         fraicheur = f'<div class="sub">{libelle_fraicheur(d)}</div>' 
+        chute = d.get("chute_prealable")
+        if chute is None:
+            ctx = "<td>—</td>"
+        else:
+            # Vert dans la zone favorable, orange au-dessus : un mouvement
+            # préalable démesuré n'est pas un meilleur signal mais un signal
+            # moins fiable — le taux de réussite y retombe de 100 % à 68 %.
+            bas, haut = zone_chute
+            if chute > haut:
+                ctx_cls, note = "bo", "excessive"
+            elif chute >= bas:
+                ctx_cls, note = "bg", "favorable"
+            else:
+                ctx_cls, note = "bn", ""
+            ctx = (f'<td><span class="badge {ctx_cls}">{chute:.0f} %</span>'
+                   + (f'<div class="sub">{note}</div>' if note else "") + '</td>')
         retr = d.get("retracement_pct", 0.0)
         unite = d.get("retracement_unite", "%")
         pivot_bas, pivot_haut = (5, 10) if unite == "ATR" else (15, 30)
@@ -1128,6 +1253,7 @@ def tableau_html(liste, seuil_fort=None):
 <td><span class="badge vue-{d['vue']}">{d['vue']}</span></td>
 <td>{meta['emoji']} {meta['court']}</td>
 <td>{badge_duree(d)}</td>
+{ctx}
 <td>{d['date_a'].strftime('%d/%m/%Y')}</td>
 <td>{d['date_b'].strftime('%d/%m/%Y')}{fraicheur}</td>
 <td>{d['prix_a']:.2f} → {d['prix_b']:.2f}<div class="sub">{d['ecart_prix_pct']:+.2f}%</div></td>
@@ -1415,6 +1541,7 @@ Filtres anti-bruit : écart intermédiaire &le; {retr_txt} (deux pivots séparé
     #    Inutile quand le rapport n'en contient déjà pas d'autres : on éviterait
     #    juste d'afficher deux fois les mêmes lignes. ──
     seuil_fort = params["prioritaire"]["rsi_delta_fort"]
+    zone_chute = tuple(params.get("contexte", {}).get("zone_favorable", [35.0, 50.0]))
     en_formation = [d for d in divergences if not d["confirmee"]]
     if avec_confirmees:
         fortes = [d for d in en_formation if abs(d["delta_rsi"]) >= seuil_fort]
@@ -1425,7 +1552,7 @@ Filtres anti-bruit : écart intermédiaire &le; {retr_txt} (deux pivots séparé
             html.append('<div class="prio">')
             html.append(tableau_html(
                 sorted(en_formation, key=lambda x: (-abs(x["delta_rsi"]), x["fraicheur"])),
-                seuil_fort))
+                seuil_fort, zone_chute))
             html.append('</div>')
         else:
             html.append('<div class="vide">Aucune divergence en cours de formation.</div>')
@@ -1441,7 +1568,7 @@ Filtres anti-bruit : écart intermédiaire &le; {retr_txt} (deux pivots séparé
 
         cle = ((lambda x: (x["fraicheur"], x["ticker"])) if avec_confirmees
                else (lambda x: (-abs(x["delta_rsi"]), x["fraicheur"])))
-        html.append(tableau_html(sorted(du_vue, key=cle), seuil_fort))
+        html.append(tableau_html(sorted(du_vue, key=cle), seuil_fort, zone_chute))
 
     if historique:
         html.append(section_historique(historique, params, vues))
@@ -1539,8 +1666,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Détecte les divergences RSI en vue D et W sur la watchlist.",
         formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument("--vue", default="DW",
-                        help="Vues à scanner : D, W ou DW (défaut : DW)")
+    parser.add_argument("--vue", default="DWM",
+                        help="Vues à scanner : combinaison de D, W et M "
+                             "(défaut : DWM)")
     parser.add_argument("--tickers", default=None,
                         help="Liste de tickers séparés par des virgules "
                              "(défaut : tickers.txt)")
@@ -1563,7 +1691,8 @@ def main():
     config = charger_config()
     params = config["divergence"]
 
-    vues = [v for v in ("D", "W") if v in args.vue.upper() and params["vues"].get(v, True)]
+    vues = [v for v in ("D", "W", "M")
+            if v in args.vue.upper() and params["vues"].get(v, True)]
     if not vues:
         print("Aucune vue active — vérifie --vue et config.json > divergence.vues")
         return 1
@@ -1612,16 +1741,18 @@ def main():
 
     anciennes = 0
     if not args.historique:
-        seuils = {v: max(params["rapport"]["fraicheur_max_bougies"][v],
-                         params["telegram"]["fraicheur_max_bougies"][v])
-                  for v in ("D", "W")}
+        # Les seuils se construisent sur les vues actives et non sur une liste
+        # figée : ajouter une vue ne doit pas faire tomber le filtre.
+        seuils = {v: max(params["rapport"]["fraicheur_max_bougies"].get(v, 40),
+                         params["telegram"]["fraicheur_max_bougies"].get(v, 10))
+                  for v in vues}
         avant_filtre = len(divergences)
         divergences = [d for d in divergences if d["fraicheur"] <= seuils[d["vue"]]]
         anciennes = avant_filtre - len(divergences)
         if anciennes:
+            detail = " / ".join(f"{seuils[v]} {VUES_META[v]['unite']}" for v in vues)
             print(f"\n({anciennes} divergence(s) trop ancienne(s) écartée(s) — "
-                  f"au-delà de {seuils['D']} jours / {seuils['W']} semaines, "
-                  f"--historique pour les voir)")
+                  f"au-delà de {detail}, --historique pour les voir)")
 
     # ── Rapport ──
     horodatage = datetime.now().strftime("%Y%m%d_%H%M")

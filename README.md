@@ -1,8 +1,8 @@
-# RSI Scanner — Divergences RSI en vue D et vue W
+# RSI Scanner — Divergences RSI en vues D, W et M
 
 Programme **à la demande** : tu le lances, il scanne toute ta watchlist en vue
-journalière **et** hebdomadaire, ouvre un rapport HTML et t'envoie une alerte
-Telegram pour chaque divergence RSI récente.
+journalière, hebdomadaire **et** mensuelle, ouvre un rapport HTML et t'envoie
+une alerte Telegram pour chaque divergence RSI récente.
 
 ```bash
 python3 RSI_scanner.py --ouvrir
@@ -160,7 +160,7 @@ Un ticker par ligne, les lignes commençant par `#` sont ignorées.
 
 | Option | Effet |
 |---|---|
-| `--vue D` / `--vue W` | Une seule vue (défaut : les deux) |
+| `--vue D` / `--vue DW` | Restreint les vues (défaut : `DWM`, les trois) |
 | `--tickers AAPL,NVDA` | Ignore `tickers.txt` pour ce scan |
 | `--no-telegram` | Génère le rapport sans envoyer d'alerte |
 | `--toutes` | Alerte aussi sur les divergences anciennes ou non confirmées |
@@ -231,13 +231,19 @@ signal d'un simple mouvement du marché.
    côté d'une droite en pente, ce qui écartait les divergences les plus
    franches.
 
-La vue W est reconstruite en agrégeant les bougies journalières du lundi au
-vendredi, chaque bougie portant la date de son **lundi d'ouverture** — comme sur
-les plateformes de graphiques. Un seul téléchargement par ticker sert les deux
-vues, ce qui garantit leur cohérence et divise par deux les requêtes.
+Les vues W et M sont reconstruites en agrégeant les bougies journalières. La
+semaine va du lundi au vendredi et porte la date de son **lundi d'ouverture** ;
+le mois porte la date de son **premier jour de cotation** — comme sur les
+plateformes de graphiques, qui datent la bougie à son ouverture.
 
-Chaque vignette porte en haut à gauche un badge **D** ou **W** rappelant sa
-timeframe.
+Un seul téléchargement par ticker sert les trois vues. Il se fait sur la plus
+longue des profondeurs demandées, puis chaque vue est ramenée à la sienne :
+**20 ans pour le mensuel**, 3 ans pour les deux autres. Sans ce recul le RSI
+mensuel, qui consomme déjà 14 mois avant sa première valeur, ne laisserait
+qu'une vingtaine de bougies exploitables.
+
+Chaque vignette porte en haut à gauche un badge **D**, **W** ou **M** rappelant
+sa timeframe.
 
 ---
 
@@ -326,7 +332,8 @@ si tu passes `confirmees_seulement` à `false`.
 ```json
 "pivot": {
   "D": { "gauche": 5, "droite": 5 },   ← largeur des pivots en vue D
-  "W": { "gauche": 3, "droite": 3 }    ←        idem en vue W
+  "W": { "gauche": 3, "droite": 3 },   ←        idem en vue W
+  "M": { "gauche": 2, "droite": 2 }    ←        idem en vue M
 },
 "ecart_bougies": {
   "D": { "min": 5, "max": 130 },       ← portée min/max d'une divergence
