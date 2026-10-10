@@ -116,11 +116,17 @@ DEFAUTS = {
     "contexte": {
         "fenetre": {"D": 120, "W": 52, "M": 24},
         "min_pct": 0.0,                  # 0 = aucun filtre
-        # Zone favorable, mesurée sur l'historique et non choisie a priori.
-        # En vue D, les divergences haussières précédées d'une chute de 35 à
-        # 50 % rendent +9,0 % en médiane à 60 jours, avec 100 % d'objectifs
-        # atteints sur 30 figures. En dessous le mouvement manque d'ampleur ;
-        # au-delà de 50 % la réussite retombe à 68 % — le couteau tombe encore.
+        # Zone favorable, mesurée sur 1 303 figures et non choisie a priori.
+        # La tranche 35-50 % est la meilleure des six combinaisons de vue et
+        # de sens, et la tranche au-delà de 50 % la pire, sans exception :
+        #   D haussières  35-50 : 100 % atteints, +9,0 % médian à 60 jours
+        #                   50+ :  68 % atteints, -4,4 % médian à 20 jours
+        #   D baissières  35-50 :  75 % atteints, +2,0 % médian à 60
+        #                   50+ :  65 % atteints, -2,7 %
+        #   W baissières  35-50 :  80 % atteints ;  50+ : -16,7 % à 26 sem.
+        #   M baissières  35-50 :  94 % atteints ;  50+ : -13,9 % à 12 mois
+        # Au-delà de 50 %, le mouvement préalable n'est pas un meilleur
+        # signal : le couteau tombe encore.
         "zone_favorable": [35.0, 50.0],
     },
     # Historique : que valait la figure, une fois jouée ?
@@ -494,6 +500,13 @@ def chute_prealable(highs, lows, idx_a, idx_b, sens, fenetre):
     Pour une baissière, la hausse symétrique. C'est le contexte qui donne sa
     valeur au signal : un creux pris après une baisse de 40 % a bien plus de
     chemin à reprendre qu'un creux pris dans une tendance plate.
+
+    Les deux cas sont rapportés au SOMMET du mouvement, jamais au creux. Une
+    hausse rapportée à son point de départ n'est pas bornée — sur 24 mois une
+    valeur de croissance affichait 2 886 % — alors qu'une baisse plafonne à
+    100 %. Les deux sens n'étaient donc pas comparables et tout ce qui était
+    baissier en vues W et M se retrouvait hors échelle. Rapportée au sommet,
+    la même amplitude géométrique donne le même chiffre dans les deux sens.
     """
     debut = max(0, idx_a - fenetre)
     if sens == "bas":
@@ -502,7 +515,7 @@ def chute_prealable(highs, lows, idx_a, idx_b, sens, fenetre):
         return float((sommet - creux) / sommet * 100) if sommet > 0 else 0.0
     creux = np.nanmin(lows[debut:idx_a + 1])
     sommet = np.nanmax(highs[idx_a:idx_b + 1])
-    return float((sommet - creux) / creux * 100) if creux > 0 else 0.0
+    return float((sommet - creux) / sommet * 100) if sommet > 0 else 0.0
 
 
 def calc_atr(df, periode=14):
